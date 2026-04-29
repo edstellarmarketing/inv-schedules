@@ -61,9 +61,6 @@ if "bulk_warnings" not in st.session_state:
     st.session_state.bulk_warnings = []
 if "bulk_course_map" not in st.session_state:
     st.session_state.bulk_course_map = {}
-if "bulk_keep_times" not in st.session_state:
-    st.session_state.bulk_keep_times = []
-
 if "pending_generate" not in st.session_state:
     st.session_state.pending_generate = False
 if "tz_confirmed" not in st.session_state:
@@ -218,20 +215,27 @@ bulk_usd_us = st.multiselect(
     key="bulk_usd_us",
 )
 
-st.markdown('<p class="section-header">Use original time slot (no timezone conversion)</p>', unsafe_allow_html=True)
-st.caption(
-    "Toggle ON for a country to keep the same wall-clock times as the input "
-    "(e.g. 9:00 AM–5:00 PM IST instead of converting from EST). "
-    "Currency and pricing still use each country's own rates."
-)
-bulk_keep_times = st.multiselect(
-    "Apply fixed time slot for",
-    options=[c for c in bulk_selected_countries if c not in bulk_usd_us],
-    default=[k for k in st.session_state.bulk_keep_times
-             if k in bulk_selected_countries and k not in bulk_usd_us],
-    key="bulk_keep_times",
-    label_visibility="collapsed",
-)
+bulk_fixed_time_ranges: set[tuple[str, str]] = set()
+if st.session_state.bulk_configs:
+    _unique_tr = list(dict.fromkeys(
+        (cfg["start_time"], cfg["end_time"])
+        for cfg in st.session_state.bulk_configs
+    ))
+    if _unique_tr:
+        st.markdown('<p class="section-header">Fix time slot (no timezone conversion)</p>', unsafe_allow_html=True)
+        st.caption(
+            "Toggle ON a time slot to keep the same wall-clock times across all countries "
+            "(e.g. 9:00 AM–5:00 PM shows as 9:00 AM–5:00 PM IST). "
+            "Off by default — untoggled slots convert from EST normally."
+        )
+        _n_cols = min(len(_unique_tr), 3)
+        _tr_cols = st.columns(_n_cols)
+        for _i, (_s24, _e24) in enumerate(_unique_tr):
+            _label = f"{to_12h(_s24)} – {to_12h(_e24)}"
+            _key   = f"fix_tr_{_s24}_{_e24}"
+            with _tr_cols[_i % _n_cols]:
+                if st.toggle(_label, key=_key):
+                    bulk_fixed_time_ranges.add((_s24, _e24))
 
 # Warnings from CSV parse
 for _w in st.session_state.bulk_warnings:
@@ -431,7 +435,7 @@ if st.session_state.pending_generate:
             _preview_end,
             bulk_from_date,
             bulk_usd_us,
-            bulk_keep_times,
+            bulk_fixed_time_ranges,
         )
         _tz_preview_dialog(
             _tz_rows,
@@ -480,7 +484,7 @@ if st.session_state.pending_generate:
             "status":               selected_status,
             "countries":            countries_with_rates,
             "usd_us_countries":     bulk_usd_us,
-            "keep_times_countries": bulk_keep_times,
+            "fixed_time_ranges":    list(bulk_fixed_time_ranges),
             "course_id_map":        course_id_map,
             "override_from_date":   bulk_from_date,
             "override_to_date":     bulk_to_date,

@@ -449,9 +449,9 @@ def generate_schedules_bulk(csv_configs: list[dict], shared_params: dict) -> lis
     training_mode    = shared_params["training_mode"]
     status           = shared_params["status"]
     countries        = shared_params["countries"]
-    usd_us_countries    = set(shared_params.get("usd_us_countries", []))
-    keep_times_countries = set(shared_params.get("keep_times_countries", []))
-    course_id_map        = shared_params.get("course_id_map", {})
+    usd_us_countries  = set(shared_params.get("usd_us_countries", []))
+    fixed_time_ranges = set(tuple(x) for x in shared_params.get("fixed_time_ranges", []))
+    course_id_map     = shared_params.get("course_id_map", {})
     override_from        = shared_params.get("override_from_date")
     override_to          = shared_params.get("override_to_date")
 
@@ -508,8 +508,7 @@ def generate_schedules_bulk(csv_configs: list[dict], shared_params: dict) -> lis
                 (course_id, country["region"]), 995
             )
 
-            use_usd_us     = country["name"] in usd_us_countries
-            use_keep_times = country["name"] in keep_times_countries
+            use_usd_us    = country["name"] in usd_us_countries
             eff_timezone  = _INPUT_TZ if use_usd_us else country["timezone"]
             eff_currency  = "USD"     if use_usd_us else country["currency"]
             eff_exch_rate = 1.0       if use_usd_us else country["exchange_rate"]
@@ -521,8 +520,8 @@ def generate_schedules_bulk(csv_configs: list[dict], shared_params: dict) -> lis
                     sessions_json = json.dumps(
                         [s.strftime("%Y-%m-%d") for s in sessions]
                     )
-                    if use_usd_us or use_keep_times:
-                        # Keep the original EST clock time as-is in local timezone
+                    use_fix_range   = (start_time, end_time) in fixed_time_ranges
+                    if use_usd_us or use_fix_range:
                         _local_start_24 = start_time
                         _local_end_24   = end_time
                     else:
@@ -703,7 +702,7 @@ def compute_tz_preview(
     end_time: str,
     ref_date: date,
     usd_us_countries,
-    keep_times_countries=None,
+    fixed_time_ranges=None,
 ) -> list[dict]:
     """
     Build a timezone-conversion preview table for the given countries.
@@ -714,15 +713,15 @@ def compute_tz_preview(
       "USD+Fixed"  — USD pricing + original EST clock time
     End Time is suffixed with " +1d" when it crosses midnight.
     """
-    usd_set   = set(usd_us_countries)
-    keep_set  = set(keep_times_countries or [])
+    usd_set       = set(usd_us_countries)
+    fix_set       = set(tuple(x) for x in (fixed_time_ranges or []))
+    use_fix_range = (start_time, end_time) in fix_set
     rows = []
     for country in countries:
-        use_usd_us     = country["name"] in usd_set
-        use_keep_times = country["name"] in keep_set
+        use_usd_us = country["name"] in usd_set
         eff_tz = _INPUT_TZ if use_usd_us else country["timezone"]
 
-        if use_usd_us or use_keep_times:
+        if use_usd_us or use_fix_range:
             local_start_24 = start_time
             local_end_24   = end_time
         else:
@@ -747,7 +746,7 @@ def compute_tz_preview(
 
         if use_usd_us:
             mode = "USD + Fixed"
-        elif use_keep_times:
+        elif use_fix_range:
             mode = "Fixed Time"
         else:
             mode = "Converted"
