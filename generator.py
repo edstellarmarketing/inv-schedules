@@ -57,6 +57,19 @@ def to_12h(time_24: str) -> str:
     return f"{h12}:{m:02d} {suffix}"
 
 
+def _time_category(time_24: str) -> str:
+    """Return the display time-slot category for a local 24-hour start time."""
+    h, m = map(int, time_24.split(":"))
+    mins = h * 60 + m
+    if 6*60 <= mins < 9*60:        return "Early Morning"
+    if 9*60 <= mins < 11*60:       return "Morning"
+    if 12*60 <= mins < 14*60:      return "Noon"
+    if 15*60 <= mins < 16*60 + 30: return "Early Evening"
+    if 16*60 + 30 <= mins < 18*60: return "Evening"
+    if 18*60 <= mins < 21*60:      return "Late Evening"
+    return ""
+
+
 # Per-timezone minute offset applied on top of the standard DST-aware conversion.
 # Positive = add minutes, negative = subtract minutes.
 _TZ_OFFSET_ADJUST: dict[str, int] = {
@@ -496,8 +509,11 @@ def generate_schedules_bulk(csv_configs: list[dict], shared_params: dict) -> lis
                     sessions_json = json.dumps(
                         [s.strftime("%Y-%m-%d") for s in sessions]
                     )
-                    local_start_time = to_12h(_convert_time(start_time, eff_timezone, start))
-                    local_end_time   = to_12h(_convert_time(end_time,   eff_timezone, start))
+                    _local_start_24  = _convert_time(start_time, eff_timezone, start)
+                    _local_end_24    = _convert_time(end_time,   eff_timezone, start)
+                    local_start_time = to_12h(_local_start_24)
+                    local_end_time   = to_12h(_local_end_24)
+                    time_cat         = _time_category(_local_start_24)
 
                     for tier in pricing_tiers:
                         final_price = _calc_final_price(
@@ -515,6 +531,7 @@ def generate_schedules_bulk(csv_configs: list[dict], shared_params: dict) -> lis
                             "Batch Type":           batch_type,
                             "Start Date":           start.strftime("%Y-%m-%d"),
                             "End Date":             end.strftime("%Y-%m-%d"),
+                            "Time Category":        time_cat,
                             "Session Dates (JSON)": sessions_json,
                             "Start Time":           local_start_time,
                             "End Time":             local_end_time,
@@ -619,12 +636,11 @@ def generate_schedules(params: dict) -> list[dict]:
                         [s.strftime("%Y-%m-%d") for s in sessions]
                     )
                     # Convert times using the batch start date for correct DST
-                    local_start_time = to_12h(_convert_time(
-                        params["start_time"], eff_timezone, start
-                    ))
-                    local_end_time = to_12h(_convert_time(
-                        params["end_time"], eff_timezone, start
-                    ))
+                    _local_start_24  = _convert_time(params["start_time"], eff_timezone, start)
+                    _local_end_24    = _convert_time(params["end_time"],   eff_timezone, start)
+                    local_start_time = to_12h(_local_start_24)
+                    local_end_time   = to_12h(_local_end_24)
+                    time_cat         = _time_category(_local_start_24)
 
                     for tier in params["pricing_tiers"]:
                         final_price = _calc_final_price(
@@ -642,6 +658,7 @@ def generate_schedules(params: dict) -> list[dict]:
                             "Batch Type":           batch_type,
                             "Start Date":           start.strftime("%Y-%m-%d"),
                             "End Date":             end.strftime("%Y-%m-%d"),
+                            "Time Category":        time_cat,
                             "Session Dates (JSON)": sessions_json,
                             "Start Time":           local_start_time,
                             "End Time":             local_end_time,
@@ -724,7 +741,7 @@ def rows_to_excel_bytes(rows: list[dict]) -> bytes:
     COLUMNS = [
         "Course ID", "Course Name", "Country ID", "Country", "Region",
         "Pricing Tier ID", "Pricing Tier", "Duration (hr)", "Batch Type",
-        "Start Date", "End Date", "Session Dates (JSON)", "Start Time",
+        "Start Date", "End Date", "Time Category", "Session Dates (JSON)", "Start Time",
         "End Time", "Timezone", "Capacity", "Base Price USD", "Tier %",
         "Exchange Rate", "Final Price", "Currency", "Training Mode",
         "Status", "Generation Result", "Error Message",
