@@ -49,6 +49,16 @@ if "rates_source" not in st.session_state:
 if "rates_fetched_at" not in st.session_state:
     st.session_state.rates_fetched_at = None
 
+_DEFAULT_COUNTRIES = [
+    "United States", "United Kingdom", "Canada", "Australia",
+    "Germany", "Netherlands", "Brazil", "New Zealand",
+    "United Arab Emirates", "Singapore", "Saudi Arabia",
+    "Qatar", "Malaysia", "Japan", "Sri Lanka", "Bangladesh",
+    "South Africa", "Kenya", "Nigeria", "India",
+]
+if "country_select" not in st.session_state:
+    st.session_state["country_select"] = _DEFAULT_COUNTRIES
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -113,14 +123,80 @@ with col_r:
     selected_country_names = st.multiselect(
         "Countries *",
         country_names,
-        default=[
-            "United States", "United Kingdom", "Canada", "Australia",
-            "Germany", "Netherlands", "Brazil", "New Zealand",
-            "United Arab Emirates", "Singapore", "Saudi Arabia",
-            "Qatar", "Malaysia", "Japan", "Sri Lanka", "Bangladesh",
-            "South Africa", "Kenya", "Nigeria", "India",
-        ],
+        key="country_select",
     )
+
+# ── Bulk upload countries ─────────────────────────────────────────────────────
+
+with st.expander("📎 Bulk Upload Countries"):
+    up_l, up_r = st.columns([3, 1])
+
+    with up_r:
+        # Template download
+        import io as _io
+        _tmpl = "Country\n" + "\n".join(country_names)
+        st.download_button(
+            "⬇ Download Template",
+            data=_tmpl.encode(),
+            file_name="countries_template.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+    with up_l:
+        uploaded = st.file_uploader(
+            "Upload CSV or Excel — needs a **Country** column (or first column is used)",
+            type=["csv", "xlsx", "xls"],
+            label_visibility="visible",
+        )
+
+    if uploaded:
+        try:
+            if uploaded.name.endswith((".xlsx", ".xls")):
+                _df_up = pd.read_excel(uploaded)
+            else:
+                _df_up = pd.read_csv(uploaded)
+
+            # Find the country column (case-insensitive match, else first column)
+            _col = next(
+                (c for c in _df_up.columns if c.strip().lower() == "country"),
+                _df_up.columns[0],
+            )
+            _raw = _df_up[_col].dropna().str.strip().tolist()
+
+            _valid_set   = set(country_names)
+            _recognised  = [n for n in _raw if n in _valid_set]
+            _unrecognised = [n for n in _raw if n not in _valid_set]
+
+            if _recognised:
+                info_l, btn_add, btn_replace = st.columns([4, 1, 1])
+                with info_l:
+                    msg = f"✅ **{len(_recognised)}** recognised"
+                    if _unrecognised:
+                        msg += f"   ·   ⚠️ **{len(_unrecognised)}** unrecognised: " \
+                               + ", ".join(_unrecognised[:5]) \
+                               + ("…" if len(_unrecognised) > 5 else "")
+                    st.markdown(msg)
+
+                with btn_add:
+                    if st.button("Add to selection", use_container_width=True):
+                        merged = list(dict.fromkeys(
+                            st.session_state["country_select"] + _recognised
+                        ))
+                        st.session_state["country_select"] = merged
+                        st.rerun()
+
+                with btn_replace:
+                    if st.button("Replace selection", use_container_width=True):
+                        st.session_state["country_select"] = _recognised
+                        st.rerun()
+            else:
+                st.warning("No matching country names found in the file.")
+                if _unrecognised:
+                    st.caption("Unrecognised: " + ", ".join(_unrecognised[:10]))
+
+        except Exception as exc:
+            st.error(f"Could not parse file: {exc}")
 
 # ── Dates ─────────────────────────────────────────────────────────────────────
 
