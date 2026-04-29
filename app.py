@@ -10,7 +10,10 @@ from data import (
     COURSES, COUNTRIES, COURSE_PRICING, PRICING_TIERS,
     TRAINING_MODES, STATUSES, DAYS_OF_WEEK,
 )
-from generator import generate_schedules, generate_schedules_bulk, parse_bulk_csv, rows_to_excel_bytes
+from generator import (
+    generate_schedules, generate_schedules_bulk, parse_bulk_csv,
+    rows_to_excel_bytes, compute_tz_preview, to_12h,
+)
 
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -68,6 +71,11 @@ if "bulk_warnings" not in st.session_state:
 if "bulk_course_map" not in st.session_state:
     st.session_state.bulk_course_map = {}
 
+if "pending_generate" not in st.session_state:
+    st.session_state.pending_generate = False
+if "tz_confirmed" not in st.session_state:
+    st.session_state.tz_confirmed = False
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -109,6 +117,42 @@ def _bump_rates(new_rates: dict, source: str, fetched_at: str | None = None):
     st.session_state.rates_version += 1
     st.session_state.rates_source = source
     st.session_state.rates_fetched_at = fetched_at
+
+
+# ── Timezone preview dialog ───────────────────────────────────────────────────
+
+@st.dialog("🌍 Timezone Conversion Preview", width="large")
+def _tz_preview_dialog(rows, input_start_12h, input_end_12h, ref_date_str, bulk_note):
+    st.caption(
+        f"Reference date: **{ref_date_str}** · Input times in **EST (America/New_York)**"
+    )
+    st.markdown(f"**Input:** {input_start_12h} – {input_end_12h} EST")
+    if bulk_note:
+        st.info(bulk_note)
+    st.dataframe(
+        pd.DataFrame(rows),
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Country":          st.column_config.TextColumn("Country", width="medium"),
+            "Timezone":         st.column_config.TextColumn("TZ", width="small"),
+            "UTC Offset":       st.column_config.TextColumn("UTC Offset", width="small"),
+            "Local Start Time": st.column_config.TextColumn("Local Start", width="small"),
+            "Local End Time":   st.column_config.TextColumn("Local End", width="small"),
+            "USD Override":     st.column_config.TextColumn("USD Override", width="small"),
+        },
+    )
+    st.caption("'+1d' means the session ends the following calendar day in that timezone.")
+    st.markdown("---")
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("✅ Confirm & Generate", type="primary", use_container_width=True):
+            st.session_state.tz_confirmed = True
+            st.rerun()
+    with c2:
+        if st.button("✖ Cancel", use_container_width=True):
+            st.session_state.pending_generate = False
+            st.rerun()
 
 
 # ── Lookup maps ───────────────────────────────────────────────────────────────
@@ -535,16 +579,17 @@ st.markdown("---")
 
 # ── Generate & Download ───────────────────────────────────────────────────────
 
-col_btn, col_cancel = st.columns([1, 6])
+col_btn, _ = st.columns([1, 6])
 with col_btn:
-    generate_clicked = st.button("⬇ Generate & Download", type="primary", use_container_width=True)
-with col_cancel:
-    st.button("Cancel", use_container_width=False)
+    if st.button("⬇ Generate & Download", type="primary", use_container_width=True):
+        st.session_state.pending_generate = True
+        st.session_state.tz_confirmed = False
 
-if generate_clicked:
+if st.session_state.pending_generate:
     manual_ready = (wd_batches > 0 or we_batches > 0)
     bulk_ready   = len(st.session_state.bulk_configs) > 0
 
+    # ── Validation ────────────────────────────────────────────────────────────
     errors = []
 
     selected_tiers = []
@@ -576,108 +621,186 @@ if generate_clicked:
     if errors:
         for e in errors:
             st.error(e)
-        st.stop()
+        st.session_state.pending_generate = False
 
-    # Build rate lookup from edited table
-    rate_lookup: dict[str, float | None] = {}
-    if not edited_rates_df.empty:
-        for _, row in edited_rates_df.iterrows():
-            val = row["Exchange Rate (vs USD)"]
-            rate_lookup[row["Country"]] = float(val) if pd.notna(val) else None
+    elif not st.session_state.tz_confirmed:
+        # ── Build timezone preview and show dialog ─────────────────────────
+        # Collect all unique countries for the preview
+        _preview_countries = []
+        _seen_names: set[str] = set()
+        _preview_start = _preview_end = None
+        _ref_date_preview = None
+        _usd_override: list[str] = []
+        _bulk_note = None
 
-    def _countries_with_rates(names):
-        result = []
-        for name in names:
-            c = dict(country_map[name])
-            c["exchange_rate"] = rate_lookup.get(name, c["exchange_rate"])
-            result.append(c)
-        return result
+        if manual_ready:
+            for _n in selected_country_names:
+                if _n not in _seen_names:
+                    _preview_countries.append(country_map[_n])
+                    _seen_names.add(_n)
+            _preview_start = time_to_str(start_time_val)
+            _preview_end   = time_to_str(end_time_val)
+            _ref_date_preview = from_date
+            _usd_override = list(usd_us_countries)
 
-    all_rows     = []
-    manual_count = 0
-    bulk_count   = 0
+        if bulk_ready:
+            for _n in bulk_selected_countries:
+                if _n not in _seen_names:
+                    _preview_countries.append(country_map[_n])
+                    _seen_names.add(_n)
+            _usd_override = list(dict.fromkeys(_usd_override + list(bulk_usd_us)))
 
-    if manual_ready:
-        params = {
-            "course_id":               course_obj["id"],
-            "course_name":             course_obj["name"],
-            "from_date":               from_date,
-            "to_date":                 to_date,
-            "pricing_tiers":           selected_tiers,
-            "training_days":           int(training_days),
-            "default_capacity":        int(default_capacity),
-            "weekday_batches_enabled": wd_batches > 0,
-            "weekday_day_format":      wd_day_format,
-            "weekday_weeks":           wd_weeks,
-            "weekend_batches_enabled": we_batches > 0,
-            "weekend_day_format":      we_day_format,
-            "weekend_weeks":           we_weeks,
-            "training_mode":           mode_value_map[selected_mode_label],
-            "start_time":              time_to_str(start_time_val),
-            "end_time":                time_to_str(end_time_val),
-            "duration":                int(duration),
-            "status":                  selected_status,
-            "countries":               _countries_with_rates(selected_country_names),
-            "usd_us_countries":        usd_us_countries,
-        }
-        with st.spinner("Generating manual schedules…"):
-            manual_rows = generate_schedules(params)
-        all_rows    += manual_rows
-        manual_count = len(manual_rows)
+            if _preview_start is None and st.session_state.bulk_configs:
+                # Use first config's times as representative
+                _c0 = st.session_state.bulk_configs[0]
+                _preview_start = _c0["start_time"]
+                _preview_end   = _c0["end_time"]
+                _ref_date_preview = bulk_from_date
 
-    if bulk_ready:
-        course_id_map = {}
-        for cfg in st.session_state.bulk_configs:
-            name = cfg["course_name"]
-            if name in course_map:
-                course_id_map[name] = course_map[name]["id"]
-            else:
-                mapped = st.session_state.bulk_course_map.get(name)
-                if mapped and mapped in course_map:
-                    course_id_map[name] = course_map[mapped]["id"]
-                else:
-                    course_id_map[name] = 0
+            # Check for multiple distinct time slots in bulk
+            _unique_times = list(dict.fromkeys(
+                (cfg["start_time"], cfg["end_time"])
+                for cfg in st.session_state.bulk_configs
+            ))
+            if len(_unique_times) > 1:
+                _time_list = ", ".join(
+                    f"{to_12h(s)}–{to_12h(e)}" for s, e in _unique_times[:4]
+                ) + ("…" if len(_unique_times) > 4 else "")
+                _bulk_note = (
+                    f"Bulk import has **{len(_unique_times)} different time slots** "
+                    f"({_time_list}). Preview shows the first; "
+                    f"all will be converted correctly on generate."
+                )
 
-        bulk_shared = {
-            "pricing_tiers":      selected_tiers,
-            "default_capacity":   int(default_capacity),
-            "training_mode":      mode_value_map[selected_mode_label],
-            "status":             selected_status,
-            "countries":          _countries_with_rates(bulk_selected_countries),
-            "usd_us_countries":   bulk_usd_us,
-            "course_id_map":      course_id_map,
-            "override_from_date": bulk_from_date,
-            "override_to_date":   bulk_to_date,
-        }
-        with st.spinner("Generating bulk schedules…"):
-            bulk_rows = generate_schedules_bulk(st.session_state.bulk_configs, bulk_shared)
-        all_rows  += bulk_rows
-        bulk_count = len(bulk_rows)
+        if _preview_countries and _preview_start and _ref_date_preview:
+            _tz_rows = compute_tz_preview(
+                _preview_countries,
+                _preview_start,
+                _preview_end,
+                _ref_date_preview,
+                _usd_override,
+            )
+            _tz_preview_dialog(
+                _tz_rows,
+                to_12h(_preview_start),
+                to_12h(_preview_end),
+                _ref_date_preview.strftime("%d %b %Y"),
+                _bulk_note,
+            )
 
-    if not all_rows:
-        st.warning("No schedules generated. Check your date range and batch settings.")
-        st.stop()
-
-    xlsx_bytes = rows_to_excel_bytes(all_rows)
-    filename   = f"bulk-schedules-{datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx"
-
-    if manual_ready and bulk_ready:
-        st.success(
-            f"Generated **{len(all_rows)}** rows — "
-            f"**{manual_count}** from manual schedule, **{bulk_count}** from bulk import."
-        )
-    elif manual_ready:
-        st.success(f"Generated **{len(all_rows)}** rows from manual schedule.")
     else:
-        st.success(f"Generated **{len(all_rows)}** rows from bulk import.")
+        # ── Confirmed — run generation ─────────────────────────────────────
+        st.session_state.pending_generate = False
+        st.session_state.tz_confirmed = False
 
-    st.download_button(
-        label="⬇ Download Excel",
-        data=xlsx_bytes,
-        file_name=filename,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        type="primary",
-    )
+        # Rebuild selected_tiers (may not be in scope here; recompute)
+        selected_tiers = []
+        if use_bronze: selected_tiers.append(tier_map["Bronze"])
+        if use_silver: selected_tiers.append(tier_map["Silver"])
+        if use_gold:   selected_tiers.append(tier_map["Gold"])
 
-    with st.expander("Preview (first 50 rows)", expanded=False):
-        st.dataframe(pd.DataFrame(all_rows[:50]), use_container_width=True)
+        manual_ready = (wd_batches > 0 or we_batches > 0)
+        bulk_ready   = len(st.session_state.bulk_configs) > 0
+
+        # Build rate lookup from edited table
+        rate_lookup: dict[str, float | None] = {}
+        if not edited_rates_df.empty:
+            for _, row in edited_rates_df.iterrows():
+                val = row["Exchange Rate (vs USD)"]
+                rate_lookup[row["Country"]] = float(val) if pd.notna(val) else None
+
+        def _countries_with_rates(names):
+            result = []
+            for name in names:
+                c = dict(country_map[name])
+                c["exchange_rate"] = rate_lookup.get(name, c["exchange_rate"])
+                result.append(c)
+            return result
+
+        all_rows     = []
+        manual_count = 0
+        bulk_count   = 0
+
+        if manual_ready:
+            params = {
+                "course_id":               course_obj["id"],
+                "course_name":             course_obj["name"],
+                "from_date":               from_date,
+                "to_date":                 to_date,
+                "pricing_tiers":           selected_tiers,
+                "training_days":           int(training_days),
+                "default_capacity":        int(default_capacity),
+                "weekday_batches_enabled": wd_batches > 0,
+                "weekday_day_format":      wd_day_format,
+                "weekday_weeks":           wd_weeks,
+                "weekend_batches_enabled": we_batches > 0,
+                "weekend_day_format":      we_day_format,
+                "weekend_weeks":           we_weeks,
+                "training_mode":           mode_value_map[selected_mode_label],
+                "start_time":              time_to_str(start_time_val),
+                "end_time":                time_to_str(end_time_val),
+                "duration":                int(duration),
+                "status":                  selected_status,
+                "countries":               _countries_with_rates(selected_country_names),
+                "usd_us_countries":        usd_us_countries,
+            }
+            with st.spinner("Generating manual schedules…"):
+                manual_rows = generate_schedules(params)
+            all_rows    += manual_rows
+            manual_count = len(manual_rows)
+
+        if bulk_ready:
+            course_id_map = {}
+            for cfg in st.session_state.bulk_configs:
+                name = cfg["course_name"]
+                if name in course_map:
+                    course_id_map[name] = course_map[name]["id"]
+                else:
+                    mapped = st.session_state.bulk_course_map.get(name)
+                    if mapped and mapped in course_map:
+                        course_id_map[name] = course_map[mapped]["id"]
+                    else:
+                        course_id_map[name] = 0
+
+            bulk_shared = {
+                "pricing_tiers":      selected_tiers,
+                "default_capacity":   int(default_capacity),
+                "training_mode":      mode_value_map[selected_mode_label],
+                "status":             selected_status,
+                "countries":          _countries_with_rates(bulk_selected_countries),
+                "usd_us_countries":   bulk_usd_us,
+                "course_id_map":      course_id_map,
+                "override_from_date": bulk_from_date,
+                "override_to_date":   bulk_to_date,
+            }
+            with st.spinner("Generating bulk schedules…"):
+                bulk_rows = generate_schedules_bulk(st.session_state.bulk_configs, bulk_shared)
+            all_rows  += bulk_rows
+            bulk_count = len(bulk_rows)
+
+        if not all_rows:
+            st.warning("No schedules generated. Check your date range and batch settings.")
+        else:
+            xlsx_bytes = rows_to_excel_bytes(all_rows)
+            filename   = f"bulk-schedules-{datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx"
+
+            if manual_ready and bulk_ready:
+                st.success(
+                    f"Generated **{len(all_rows)}** rows — "
+                    f"**{manual_count}** from manual schedule, **{bulk_count}** from bulk import."
+                )
+            elif manual_ready:
+                st.success(f"Generated **{len(all_rows)}** rows from manual schedule.")
+            else:
+                st.success(f"Generated **{len(all_rows)}** rows from bulk import.")
+
+            st.download_button(
+                label="⬇ Download Excel",
+                data=xlsx_bytes,
+                file_name=filename,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+            )
+
+            with st.expander("Preview (first 50 rows)", expanded=False):
+                st.dataframe(pd.DataFrame(all_rows[:50]), use_container_width=True)

@@ -9,6 +9,53 @@ _INPUT_TZ = "America/New_York"
 
 _VALID_DAYS = set(DAY_TO_US_DOW.keys())
 
+# Common abbreviation for each IANA timezone used in this app
+_TZ_ABBR_MAP: dict[str, str] = {
+    "America/New_York":    "EST",
+    "America/Toronto":     "EST",
+    "Europe/London":       "GMT",
+    "Europe/Berlin":       "CET",
+    "Europe/Amsterdam":    "CET",
+    "America/Sao_Paulo":   "BRT",
+    "Pacific/Auckland":    "NZST",
+    "Asia/Dubai":          "GST",
+    "Asia/Singapore":      "SGT",
+    "Asia/Riyadh":         "AST",
+    "Asia/Qatar":          "AST",
+    "Asia/Kuala_Lumpur":   "MYT",
+    "Asia/Tokyo":          "JST",
+    "Asia/Colombo":        "SLST",
+    "Asia/Dhaka":          "BST",
+    "Africa/Johannesburg": "SAST",
+    "Africa/Nairobi":      "EAT",
+    "Africa/Lagos":        "WAT",
+    "Asia/Kolkata":        "IST",
+    "Australia/Sydney":    "AEST",
+}
+
+
+def _tz_abbr(tz_name: str) -> str:
+    """Return a short, human-readable abbreviation for an IANA timezone name."""
+    if tz_name in _TZ_ABBR_MAP:
+        return _TZ_ABBR_MAP[tz_name]
+    try:
+        # Use a fixed winter date so we always get the standard (non-DST) name
+        dt = datetime(2026, 1, 15, 12, 0, tzinfo=ZoneInfo(tz_name))
+        abbr = dt.strftime("%Z")
+        if not abbr.startswith(("+", "-")):
+            return abbr
+    except Exception:
+        pass
+    return tz_name
+
+
+def to_12h(time_24: str) -> str:
+    """Convert 'HH:MM' 24-hour string to 'H:MM AM/PM'."""
+    h, m = map(int, time_24.split(":"))
+    suffix = "AM" if h < 12 else "PM"
+    h12 = h % 12 or 12
+    return f"{h12}:{m:02d} {suffix}"
+
 
 def _convert_time(time_str: str, to_tz: str, ref_date: date) -> str:
     """
@@ -435,8 +482,8 @@ def generate_schedules_bulk(csv_configs: list[dict], shared_params: dict) -> lis
                     sessions_json = json.dumps(
                         [s.strftime("%Y-%m-%d") for s in sessions]
                     )
-                    local_start_time = _convert_time(start_time, eff_timezone, start)
-                    local_end_time   = _convert_time(end_time,   eff_timezone, start)
+                    local_start_time = to_12h(_convert_time(start_time, eff_timezone, start))
+                    local_end_time   = to_12h(_convert_time(end_time,   eff_timezone, start))
 
                     for tier in pricing_tiers:
                         final_price = _calc_final_price(
@@ -457,7 +504,7 @@ def generate_schedules_bulk(csv_configs: list[dict], shared_params: dict) -> lis
                             "Session Dates (JSON)": sessions_json,
                             "Start Time":           local_start_time,
                             "End Time":             local_end_time,
-                            "Timezone":             eff_timezone,
+                            "Timezone":             _tz_abbr(eff_timezone),
                             "Capacity":             default_capacity,
                             "Base Price USD":        base_price,
                             "Tier %":               tier["percentage"],
@@ -558,12 +605,12 @@ def generate_schedules(params: dict) -> list[dict]:
                         [s.strftime("%Y-%m-%d") for s in sessions]
                     )
                     # Convert times using the batch start date for correct DST
-                    local_start_time = _convert_time(
+                    local_start_time = to_12h(_convert_time(
                         params["start_time"], eff_timezone, start
-                    )
-                    local_end_time = _convert_time(
+                    ))
+                    local_end_time = to_12h(_convert_time(
                         params["end_time"], eff_timezone, start
-                    )
+                    ))
 
                     for tier in params["pricing_tiers"]:
                         final_price = _calc_final_price(
@@ -584,7 +631,7 @@ def generate_schedules(params: dict) -> list[dict]:
                             "Session Dates (JSON)": sessions_json,
                             "Start Time":           local_start_time,
                             "End Time":             local_end_time,
-                            "Timezone":             eff_timezone,
+                            "Timezone":             _tz_abbr(eff_timezone),
                             "Capacity":             params["default_capacity"],
                             "Base Price USD":        base_price,
                             "Tier %":               tier["percentage"],
@@ -599,6 +646,58 @@ def generate_schedules(params: dict) -> list[dict]:
                             "Override Reason":       None,
                         })
 
+    return rows
+
+
+def compute_tz_preview(
+    countries: list[dict],
+    start_time: str,
+    end_time: str,
+    ref_date: date,
+    usd_us_countries,
+) -> list[dict]:
+    """
+    Build a timezone-conversion preview table for the given countries.
+
+    Returns one row per country with columns:
+      Country, Timezone, UTC Offset, Start Time (local), End Time (local)
+    End Time is suffixed with " +1d" when it crosses midnight.
+    """
+    usd_set = set(usd_us_countries)
+    rows = []
+    for country in countries:
+        use_usd_us = country["name"] in usd_set
+        eff_tz = _INPUT_TZ if use_usd_us else country["timezone"]
+
+        local_start_24 = _convert_time(start_time, eff_tz, ref_date)
+        local_end_24   = _convert_time(end_time,   eff_tz, ref_date)
+
+        local_start = to_12h(local_start_24)
+        local_end   = to_12h(local_end_24)
+
+        # Detect midnight crossing: end time earlier than start in minutes
+        sh, sm = map(int, local_start_24.split(":"))
+        eh, em = map(int, local_end_24.split(":"))
+        if (eh * 60 + em) < (sh * 60 + sm):
+            local_end += " +1d"
+
+        # UTC offset string
+        dt = datetime(ref_date.year, ref_date.month, ref_date.day, 12, 0,
+                      tzinfo=ZoneInfo(eff_tz))
+        offset_sec = int(dt.utcoffset().total_seconds())
+        sign = "+" if offset_sec >= 0 else "-"
+        abs_sec = abs(offset_sec)
+        h_off, m_off = divmod(abs_sec // 60, 60)
+        offset_str = f"UTC{sign}{h_off}:{m_off:02d}" if m_off else f"UTC{sign}{h_off}"
+
+        rows.append({
+            "Country":          country["name"],
+            "Timezone":         _tz_abbr(eff_tz),
+            "UTC Offset":       offset_str,
+            "Local Start Time": local_start,
+            "Local End Time":   local_end,
+            "USD Override":     "Yes" if use_usd_us else "",
+        })
     return rows
 
 
