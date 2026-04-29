@@ -449,10 +449,11 @@ def generate_schedules_bulk(csv_configs: list[dict], shared_params: dict) -> lis
     training_mode    = shared_params["training_mode"]
     status           = shared_params["status"]
     countries        = shared_params["countries"]
-    usd_us_countries = set(shared_params.get("usd_us_countries", []))
-    course_id_map    = shared_params.get("course_id_map", {})
-    override_from    = shared_params.get("override_from_date")
-    override_to      = shared_params.get("override_to_date")
+    usd_us_countries    = set(shared_params.get("usd_us_countries", []))
+    keep_times_countries = set(shared_params.get("keep_times_countries", []))
+    course_id_map        = shared_params.get("course_id_map", {})
+    override_from        = shared_params.get("override_from_date")
+    override_to          = shared_params.get("override_to_date")
 
     # Deduplicate configs by (course_name, hours_per_day, tuple(day_sequence), tuple(weeks), from_date, to_date)
     seen = set()
@@ -507,10 +508,11 @@ def generate_schedules_bulk(csv_configs: list[dict], shared_params: dict) -> lis
                 (course_id, country["region"]), 995
             )
 
-            use_usd_us    = country["name"] in usd_us_countries
-            eff_timezone  = _INPUT_TZ            if use_usd_us else country["timezone"]
-            eff_currency  = "USD"                if use_usd_us else country["currency"]
-            eff_exch_rate = 1.0                  if use_usd_us else country["exchange_rate"]
+            use_usd_us     = country["name"] in usd_us_countries
+            use_keep_times = country["name"] in keep_times_countries
+            eff_timezone  = _INPUT_TZ if use_usd_us else country["timezone"]
+            eff_currency  = "USD"     if use_usd_us else country["currency"]
+            eff_exch_rate = 1.0       if use_usd_us else country["exchange_rate"]
 
             for month_key in sorted_months:
                 month_batches = sorted(by_month[month_key], key=lambda b: b[0], reverse=True)
@@ -519,8 +521,13 @@ def generate_schedules_bulk(csv_configs: list[dict], shared_params: dict) -> lis
                     sessions_json = json.dumps(
                         [s.strftime("%Y-%m-%d") for s in sessions]
                     )
-                    _local_start_24  = _convert_time(start_time, eff_timezone, start)
-                    _local_end_24    = _convert_time(end_time,   eff_timezone, start)
+                    if use_usd_us or use_keep_times:
+                        # Keep the original EST clock time as-is in local timezone
+                        _local_start_24 = start_time
+                        _local_end_24   = end_time
+                    else:
+                        _local_start_24 = _convert_time(start_time, eff_timezone, start)
+                        _local_end_24   = _convert_time(end_time,   eff_timezone, start)
                     local_start_time = to_12h(_local_start_24)
                     local_end_time   = to_12h(_local_end_24)
                     time_cat         = _time_category(_local_start_24)
@@ -696,33 +703,40 @@ def compute_tz_preview(
     end_time: str,
     ref_date: date,
     usd_us_countries,
+    keep_times_countries=None,
 ) -> list[dict]:
     """
     Build a timezone-conversion preview table for the given countries.
 
-    Returns one row per country with columns:
-      Country, Timezone, UTC Offset, Start Time (local), End Time (local)
+    Mode per country:
+      "Converted"  — standard DST-aware conversion from EST
+      "Fixed Time" — keep original EST clock time, just relabel to local TZ
+      "USD+Fixed"  — USD pricing + original EST clock time
     End Time is suffixed with " +1d" when it crosses midnight.
     """
-    usd_set = set(usd_us_countries)
+    usd_set   = set(usd_us_countries)
+    keep_set  = set(keep_times_countries or [])
     rows = []
     for country in countries:
-        use_usd_us = country["name"] in usd_set
+        use_usd_us     = country["name"] in usd_set
+        use_keep_times = country["name"] in keep_set
         eff_tz = _INPUT_TZ if use_usd_us else country["timezone"]
 
-        local_start_24 = _convert_time(start_time, eff_tz, ref_date)
-        local_end_24   = _convert_time(end_time,   eff_tz, ref_date)
+        if use_usd_us or use_keep_times:
+            local_start_24 = start_time
+            local_end_24   = end_time
+        else:
+            local_start_24 = _convert_time(start_time, eff_tz, ref_date)
+            local_end_24   = _convert_time(end_time,   eff_tz, ref_date)
 
         local_start = to_12h(local_start_24)
         local_end   = to_12h(local_end_24)
 
-        # Detect midnight crossing: end time earlier than start in minutes
         sh, sm = map(int, local_start_24.split(":"))
         eh, em = map(int, local_end_24.split(":"))
         if (eh * 60 + em) < (sh * 60 + sm):
             local_end += " +1d"
 
-        # UTC offset string
         dt = datetime(ref_date.year, ref_date.month, ref_date.day, 12, 0,
                       tzinfo=ZoneInfo(eff_tz))
         offset_sec = int(dt.utcoffset().total_seconds())
@@ -731,13 +745,20 @@ def compute_tz_preview(
         h_off, m_off = divmod(abs_sec // 60, 60)
         offset_str = f"UTC{sign}{h_off}:{m_off:02d}" if m_off else f"UTC{sign}{h_off}"
 
+        if use_usd_us:
+            mode = "USD + Fixed"
+        elif use_keep_times:
+            mode = "Fixed Time"
+        else:
+            mode = "Converted"
+
         rows.append({
             "Country":          country["name"],
             "Timezone":         _tz_abbr(eff_tz),
             "UTC Offset":       offset_str,
             "Local Start Time": local_start,
             "Local End Time":   local_end,
-            "USD Override":     "Yes" if use_usd_us else "",
+            "Time Mode":        mode,
         })
     return rows
 

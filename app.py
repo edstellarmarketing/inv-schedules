@@ -61,6 +61,8 @@ if "bulk_warnings" not in st.session_state:
     st.session_state.bulk_warnings = []
 if "bulk_course_map" not in st.session_state:
     st.session_state.bulk_course_map = {}
+if "bulk_keep_times" not in st.session_state:
+    st.session_state.bulk_keep_times = []
 
 if "pending_generate" not in st.session_state:
     st.session_state.pending_generate = False
@@ -103,7 +105,7 @@ def _tz_preview_dialog(rows, input_start_12h, input_end_12h, ref_date_str, bulk_
             "UTC Offset":       st.column_config.TextColumn("UTC Offset", width="small"),
             "Local Start Time": st.column_config.TextColumn("Local Start", width="small"),
             "Local End Time":   st.column_config.TextColumn("Local End", width="small"),
-            "USD Override":     st.column_config.TextColumn("USD Override", width="small"),
+            "Time Mode":        st.column_config.TextColumn("Time Mode", width="small"),
         },
     )
     st.caption("'+1d' means the session ends the following calendar day in that timezone.")
@@ -214,6 +216,21 @@ bulk_usd_us = st.multiselect(
     default=[],
     help="These countries will use USD pricing (rate = 1) and America/New_York time.",
     key="bulk_usd_us",
+)
+
+st.markdown('<p class="section-header">Use original time slot (no timezone conversion)</p>', unsafe_allow_html=True)
+st.caption(
+    "Toggle ON for a country to keep the same wall-clock times as the input "
+    "(e.g. 9:00 AM–5:00 PM IST instead of converting from EST). "
+    "Currency and pricing still use each country's own rates."
+)
+bulk_keep_times = st.multiselect(
+    "Apply fixed time slot for",
+    options=[c for c in bulk_selected_countries if c not in bulk_usd_us],
+    default=[k for k in st.session_state.bulk_keep_times
+             if k in bulk_selected_countries and k not in bulk_usd_us],
+    key="bulk_keep_times",
+    label_visibility="collapsed",
 )
 
 # Warnings from CSV parse
@@ -414,6 +431,7 @@ if st.session_state.pending_generate:
             _preview_end,
             bulk_from_date,
             bulk_usd_us,
+            bulk_keep_times,
         )
         _tz_preview_dialog(
             _tz_rows,
@@ -456,15 +474,16 @@ if st.session_state.pending_generate:
                 course_id_map[name] = course_map[mapped]["id"] if mapped and mapped in course_map else 0
 
         bulk_shared = {
-            "pricing_tiers":      selected_tiers,
-            "default_capacity":   int(default_capacity),
-            "training_mode":      mode_value_map[selected_mode_label],
-            "status":             selected_status,
-            "countries":          countries_with_rates,
-            "usd_us_countries":   bulk_usd_us,
-            "course_id_map":      course_id_map,
-            "override_from_date": bulk_from_date,
-            "override_to_date":   bulk_to_date,
+            "pricing_tiers":        selected_tiers,
+            "default_capacity":     int(default_capacity),
+            "training_mode":        mode_value_map[selected_mode_label],
+            "status":               selected_status,
+            "countries":            countries_with_rates,
+            "usd_us_countries":     bulk_usd_us,
+            "keep_times_countries": bulk_keep_times,
+            "course_id_map":        course_id_map,
+            "override_from_date":   bulk_from_date,
+            "override_to_date":     bulk_to_date,
         }
 
         with st.spinner("Generating schedules…"):
