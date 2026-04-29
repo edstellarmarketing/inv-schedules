@@ -57,9 +57,17 @@ def to_12h(time_24: str) -> str:
     return f"{h12}:{m:02d} {suffix}"
 
 
+# Per-timezone minute offset applied on top of the standard DST-aware conversion.
+# Positive = add minutes, negative = subtract minutes.
+_TZ_OFFSET_ADJUST: dict[str, int] = {
+    "Asia/Kolkata": -30,   # India: display 30 min earlier than raw conversion
+}
+
+
 def _convert_time(time_str: str, to_tz: str, ref_date: date) -> str:
     """
     Convert HH:MM from America/New_York to `to_tz` using `ref_date` for DST accuracy.
+    Applies any entry in _TZ_OFFSET_ADJUST after conversion.
     Returns the original string unchanged when target is already New York.
     """
     if to_tz == _INPUT_TZ:
@@ -67,7 +75,13 @@ def _convert_time(time_str: str, to_tz: str, ref_date: date) -> str:
     h, m = map(int, time_str.split(":"))
     dt = datetime(ref_date.year, ref_date.month, ref_date.day, h, m,
                   tzinfo=ZoneInfo(_INPUT_TZ))
-    return dt.astimezone(ZoneInfo(to_tz)).strftime("%H:%M")
+    result = dt.astimezone(ZoneInfo(to_tz)).strftime("%H:%M")
+    adjust = _TZ_OFFSET_ADJUST.get(to_tz, 0)
+    if adjust:
+        rh, rm = map(int, result.split(":"))
+        total = (rh * 60 + rm + adjust) % (24 * 60)
+        result = f"{total // 60:02d}:{total % 60:02d}"
+    return result
 
 
 def _nth_day_of_month(year: int, month: int, anchor_us_dow: int, n: int) -> date | None:
