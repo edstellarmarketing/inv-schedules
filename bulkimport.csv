@@ -1,0 +1,37 @@
+Course Name,Hours Per Day,Weeks,Batch Type,Schedule Details,Toral Training Duration,Start Time,End Time,Time Zone,Start Date,End Date
+PgMP,8,1 week,Weekday,"Mon, Tue, Wed",24,9:00 AM,5:00 PM,EST,01-May-2026,31-December-2026
+PgMP,8,1-2 Week,Weekend,"Sat, Sun, Sat",24,9:00 AM,5:00 PM,EST,01-May-2026,31-December-2026
+PgMP,8,2 week,Weekday,"Wed, Thu, Fri",24,9:00 AM,5:00 PM,EST,01-May-2026,31-December-2026
+PgMP,8,3-4 Week,Weekend,"Sat, Sun, Sat",24,9:00 AM,5:00 PM,EST,01-May-2026,31-December-2026
+PgMP,8,3 week,Weekday,"Mon, Tue, Wed",24,9:00 AM,5:00 PM,EST,01-May-2026,31-December-2026
+PgMP,8,2-3 week,Weekend,"Sat, Sun, Sat",24,9:00 AM,5:00 PM,EST,01-May-2026,31-December-2026
+PgMP,8,4 week,Weekday,"Wed, Thu, Fri",24,9:00 AM,5:00 PM,EST,01-May-2026,31-December-2026
+PgMP,8,1 Week,Combined,"Fri, Sat, Sun",24,9:00 AM,5:00 PM,EST,01-May-2026,31-December-2026
+PgMP,8,2 Week,Combined,"Fri, Sat, Sun",24,9:00 AM,5:00 PM,EST,01-May-2026,31-December-2026
+PgMP,8,3 Week,Combined,"Fri, Sat, Sun",24,9:00 AM,5:00 PM,EST,01-May-2026,31-December-2026
+PgMP,8,4 Week,Combined,"Fri, Sat, Sun",24,9:00 AM,5:00 PM,EST,01-May-2026,31-December-2026
+PgMP,6,1 week,Weekday,"Mon, Tue, Wed, Thu",24,9:00 AM,3:00 PM,EST,01-May-2026,31-December-2026
+PgMP,6,1-2 Week,Weekend,"Sat, Sun, Sat, Sun",24,9:00 AM,3:00 PM,EST,01-May-2026,31-December-2026
+PgMP,6,2 week,Weekday,"Mon, Tue, Wed, Thu",24,9:00 AM,3:00 PM,EST,01-May-2026,31-December-2026
+PgMP,6,3-4 Week,Weekend,"Sat, Sun, Sat, Sun",24,9:00 AM,3:00 PM,EST,01-May-2026,31-December-2026
+PgMP,6,3 week,Weekday,"Mon, Tue, Wed, Thu",24,9:00 AM,3:00 PM,EST,01-May-2026,31-December-2026
+PgMP,6,2-3 week,Weekend,"Sat, Sun, Sat, Sun",24,9:00 AM,3:00 PM,EST,01-May-2026,31-December-2026
+PgMP,6,4 week,Weekday,"Mon, Tue, Wed, Thu",24,9:00 AM,3:00 PM,EST,01-May-2026,31-December-2026
+PgMP,6,1 Week,Combined,"Thu, Fri, Sat, Sun",24,9:00 AM,3:00 PM,EST,01-May-2026,31-December-2026
+PgMP,6,2 Week,Combined,"Thu, Fri, Sat, Sun",24,9:00 AM,3:00 PM,EST,01-May-2026,31-December-2026
+PgMP,6,3 Week,Combined,"Thu, Fri, Sat, Sun",24,9:00 AM,3:00 PM,EST,01-May-2026,31-December-2026
+PgMP,6,4 Week,Combined,"Thu, Fri, Sat, Sun",24,9:00 AM,3:00 PM,EST,01-May-2026,31-December-2026
+PgMP,4,1-2 weekday,Weekday,"Mon, Tue, Wed, Thu, Fri, Mon",24,6:00 AM,10:00 PM,EST,01-May-2026,31-December-2026
+PgMP,4,1-2-3 Weekend,Weekend,"Sat, Sun, Sat, Sun, Sat, Sun",24,6:00 AM,10:00 PM,EST,01-May-2026,31-December-2026
+PgMP,4,3-4 week,Weekday,"Mon, Tue, Wed, Thu, Fri, Mon",24,6:00 AM,10:00 PM,EST,01-May-2026,31-December-2026
+PgMP,4,1 Week,Combined,"Mon, Tue, Wed, Thu, Fri, Sat",24,6:00 AM,10:00 PM,EST,01-May-2026,31-December-2026
+PgMP,4,2 Week,Combined,"Sun, Mon, Tue, Wed, Thu, Fri",24,6:00 AM,10:00 PM,EST,01-May-2026,31-December-2026
+PgMP,4,3 Week,Combined,"Sat, Sun, Mon, Tue, Wed, Thu",24,6:00 AM,10:00 PM,EST,01-May-2026,31-December-2026
+PgMP,4,4 Week,Combined,"Fri, Sat, Sun, Mon, Tue, Wed",24,6:00 AM,10:00 PM,EST,01-May-2026,31-December-2026
+PgMP,3,1-2 week,Weekday,"Mon, Tue, Wed, Thu, Fri, Mon, Tue, Wed",24,9:00 AM,11:00 AM,EST,01-May-2026,31-December-2026
+PgMP,3,1-2-3-4 Week,Weekend,"Sat, Sun, Sat, Sun, Sat, Sun, Sat, Sun",24,6:00 PM,9:00 PM,EST,01-May-2026,31-December-2026
+PgMP,3,3-4-5 week,Weekday,"Thu, Fri, Mon, Tue, Wed, Thu, Fri, Mon",24,12:00 PM,3:00 PM,EST,01-May-2026,31-December-2026
+PgMP,3,1-2 Week,Combined,"Mon, Tue, Wed, Thu, Fri, Sat, Sun, Mon",24,9:00 AM,11:00 AM,EST,01-May-2026,31-December-2026
+PgMP,3,3 Week,Combined,"Tue, Wed, Thu, Fri, Sat, Sun, Mon, Tue",24,6:00 PM,9:00 PM,EST,01-May-2026,31-December-2026
+PgMP,3,4 Week,Combined,"Wed, Thu, Fri, Sat, Sun, Mon, Tue, Wed",24,12:00 PM,3:00 PM,EST,01-May-2026,31-December-2026
+PgMP,3,5 Week,Combined,"Thu, Fri, Sat, Sun, Mon, Tue, Wed, Thu",24,7:00 PM,10:00 AM,EST,01-May-2026,31-December-2026
