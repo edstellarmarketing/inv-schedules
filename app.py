@@ -36,11 +36,9 @@ st.markdown("---")
 
 # ── Session state defaults ────────────────────────────────────────────────────
 
-# base_rates: {currency: rate_vs_usd | None}  — updated by fetch / adjust / reset
 if "base_rates" not in st.session_state:
     st.session_state.base_rates = {c["currency"]: c["exchange_rate"] for c in COUNTRIES}
 
-# version bumped whenever base_rates change so the data_editor resets
 if "rates_version" not in st.session_state:
     st.session_state.rates_version = 0
 
@@ -59,6 +57,9 @@ _DEFAULT_COUNTRIES = [
 ]
 if "country_select" not in st.session_state:
     st.session_state["country_select"] = _DEFAULT_COUNTRIES
+
+if "bulk_country_select" not in st.session_state:
+    st.session_state["bulk_country_select"] = _DEFAULT_COUNTRIES
 
 if "bulk_configs" not in st.session_state:
     st.session_state.bulk_configs = []
@@ -104,7 +105,6 @@ def _fetch_live_rates() -> dict:
 
 
 def _bump_rates(new_rates: dict, source: str, fetched_at: str | None = None):
-    """Update base_rates in session state and bump the version counter."""
     st.session_state.base_rates = new_rates
     st.session_state.rates_version += 1
     st.session_state.rates_source = source
@@ -122,101 +122,9 @@ mode_labels     = [m["label"] for m in TRAINING_MODES]
 mode_value_map  = {m["label"]: m["value"] for m in TRAINING_MODES}
 
 
-# ── Course & Countries ────────────────────────────────────────────────────────
+# ── Shared: Pricing Tiers, Capacity, Training Mode, Status ───────────────────
 
-col_l, col_r = st.columns(2)
-with col_l:
-    selected_course_name = st.selectbox("Course *", course_names, index=0)
-with col_r:
-    selected_country_names = st.multiselect(
-        "Countries *",
-        country_names,
-        key="country_select",
-    )
-
-# ── USD / US-timezone override ────────────────────────────────────────────────
-
-usd_us_countries = st.multiselect(
-    "Keep USD pricing & US timezone for",
-    options=selected_country_names,
-    default=[],
-    help="Selected countries will show prices in USD (exchange rate = 1) and times in "
-         "America/New_York instead of their local timezone.",
-)
-
-# ── Bulk upload countries ─────────────────────────────────────────────────────
-
-with st.expander("📎 Bulk Upload Countries"):
-    up_l, up_r = st.columns([3, 1])
-
-    with up_r:
-        _tmpl = "Country\n" + "\n".join(country_names)
-        st.download_button(
-            "⬇ Download Template",
-            data=_tmpl.encode(),
-            file_name="countries_template.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-
-    with up_l:
-        uploaded = st.file_uploader(
-            "Upload CSV or Excel — needs a **Country** column (or first column is used)",
-            type=["csv", "xlsx", "xls"],
-            label_visibility="visible",
-        )
-
-    if uploaded:
-        try:
-            if uploaded.name.endswith((".xlsx", ".xls")):
-                _df_up = pd.read_excel(uploaded)
-            else:
-                _df_up = pd.read_csv(uploaded)
-
-            # Find the country column (case-insensitive match, else first column)
-            _col = next(
-                (c for c in _df_up.columns if c.strip().lower() == "country"),
-                _df_up.columns[0],
-            )
-            _raw = _df_up[_col].dropna().str.strip().tolist()
-
-            _valid_set    = set(country_names)
-            _recognised   = [n for n in _raw if n in _valid_set]
-            _unrecognised = [n for n in _raw if n not in _valid_set]
-
-            if _recognised:
-                info_l, btn_add, btn_replace = st.columns([4, 1, 1])
-                with info_l:
-                    msg = f"✅ **{len(_recognised)}** recognised"
-                    if _unrecognised:
-                        msg += f"   ·   ⚠️ **{len(_unrecognised)}** unrecognised: " \
-                               + ", ".join(_unrecognised[:5]) \
-                               + ("…" if len(_unrecognised) > 5 else "")
-                    st.markdown(msg)
-
-                with btn_add:
-                    if st.button("Add to selection", use_container_width=True):
-                        merged = list(dict.fromkeys(
-                            st.session_state["country_select"] + _recognised
-                        ))
-                        st.session_state["country_select"] = merged
-                        st.rerun()
-
-                with btn_replace:
-                    if st.button("Replace selection", use_container_width=True):
-                        st.session_state["country_select"] = _recognised
-                        st.rerun()
-            else:
-                st.warning("No matching country names found in the file.")
-                if _unrecognised:
-                    st.caption("Unrecognised: " + ", ".join(_unrecognised[:10]))
-
-        except Exception as exc:
-            st.error(f"Could not parse file: {exc}")
-
-# ── Pricing Tiers & Default Capacity ─────────────────────────────────────────
-
-st.markdown('<p class="section-header">Pricing Tiers (based on selected course; leave unchecked for base price only)</p>', unsafe_allow_html=True)
+st.markdown('<p class="section-header">Pricing Tiers (leave unchecked for base price only)</p>', unsafe_allow_html=True)
 tier_cols = st.columns(3)
 with tier_cols[0]:
     use_bronze = st.checkbox("Bronze", value=True, key="tier_bronze")
@@ -228,8 +136,6 @@ with tier_cols[2]:
 col_l, col_r = st.columns(2)
 with col_l:
     default_capacity = st.number_input("Default Capacity *", min_value=1, max_value=500, value=20)
-
-# ── Training Mode & Default Status ───────────────────────────────────────────
 
 col_l, col_r = st.columns(2)
 with col_l:
@@ -246,15 +152,91 @@ tab_manual, tab_bulk = st.tabs(["📋 Manual Schedule", "📂 Bulk Import"])
 # ── Tab: Manual Schedule ──────────────────────────────────────────────────────
 
 with tab_manual:
-    # Dates
+    col_l, col_r = st.columns(2)
+    with col_l:
+        selected_course_name = st.selectbox("Course *", course_names, index=0)
+    with col_r:
+        selected_country_names = st.multiselect(
+            "Countries *",
+            country_names,
+            key="country_select",
+        )
+
+    usd_us_countries = st.multiselect(
+        "Keep USD pricing & US timezone for",
+        options=selected_country_names,
+        default=[],
+        help="Selected countries will show prices in USD (exchange rate = 1) and times in "
+             "America/New_York instead of their local timezone.",
+    )
+
+    with st.expander("📎 Bulk Upload Countries"):
+        up_l, up_r = st.columns([3, 1])
+        with up_r:
+            _tmpl = "Country\n" + "\n".join(country_names)
+            st.download_button(
+                "⬇ Download Template",
+                data=_tmpl.encode(),
+                file_name="countries_template.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+        with up_l:
+            uploaded = st.file_uploader(
+                "Upload CSV or Excel — needs a **Country** column (or first column is used)",
+                type=["csv", "xlsx", "xls"],
+                label_visibility="visible",
+            )
+        if uploaded:
+            try:
+                if uploaded.name.endswith((".xlsx", ".xls")):
+                    _df_up = pd.read_excel(uploaded)
+                else:
+                    _df_up = pd.read_csv(uploaded)
+                _col = next(
+                    (c for c in _df_up.columns if c.strip().lower() == "country"),
+                    _df_up.columns[0],
+                )
+                _raw = _df_up[_col].dropna().str.strip().tolist()
+                _valid_set    = set(country_names)
+                _recognised   = [n for n in _raw if n in _valid_set]
+                _unrecognised = [n for n in _raw if n not in _valid_set]
+                if _recognised:
+                    info_l, btn_add, btn_replace = st.columns([4, 1, 1])
+                    with info_l:
+                        msg = f"✅ **{len(_recognised)}** recognised"
+                        if _unrecognised:
+                            msg += f"   ·   ⚠️ **{len(_unrecognised)}** unrecognised: " \
+                                   + ", ".join(_unrecognised[:5]) \
+                                   + ("…" if len(_unrecognised) > 5 else "")
+                        st.markdown(msg)
+                    with btn_add:
+                        if st.button("Add to selection", use_container_width=True):
+                            merged = list(dict.fromkeys(
+                                st.session_state["country_select"] + _recognised
+                            ))
+                            st.session_state["country_select"] = merged
+                            st.rerun()
+                    with btn_replace:
+                        if st.button("Replace selection", use_container_width=True):
+                            st.session_state["country_select"] = _recognised
+                            st.rerun()
+                else:
+                    st.warning("No matching country names found in the file.")
+                    if _unrecognised:
+                        st.caption("Unrecognised: " + ", ".join(_unrecognised[:10]))
+            except Exception as exc:
+                st.error(f"Could not parse file: {exc}")
+
+    st.markdown("---")
+
     col_l, col_r = st.columns(2)
     with col_l:
         from_date = st.date_input("From Date *", value=date(2026, 5, 1))
     with col_r:
         to_date = st.date_input("To Date *", value=date(2026, 8, 31))
 
-    # Training Days
-    col_l, col_r = st.columns(2)
+    col_l, _ = st.columns(2)
     with col_l:
         training_days = st.number_input(
             "Training Days (same for weekday & weekend) *",
@@ -263,13 +245,11 @@ with tab_manual:
 
     st.markdown("---")
 
-    # Weekday Schedule
     st.markdown("### Weekday Schedule")
     wd_batches = st.number_input(
         "No. of Weekday Batches per Month (0 to disable) *",
         min_value=0, max_value=5, value=2, key="wd_batches",
     )
-
     if wd_batches > 0:
         wd_day_format = checkbox_row(
             "Weekday Format (days of week)",
@@ -283,13 +263,11 @@ with tab_manual:
 
     st.markdown("---")
 
-    # Weekend Schedule
     st.markdown("### Weekend Schedule")
     we_batches = st.number_input(
         "No. of Weekend Batches per Month (0 to disable) *",
         min_value=0, max_value=5, value=2, key="we_batches",
     )
-
     if we_batches > 0:
         we_day_format = checkbox_row(
             "Weekend Format (days of week)",
@@ -303,7 +281,6 @@ with tab_manual:
 
     st.markdown("---")
 
-    # Time Slots
     st.markdown('<p class="section-header">Time Slots (enter in New York EST; stored in each country\'s local timezone) *</p>', unsafe_allow_html=True)
     ts_l, ts_r = st.columns(2)
     with ts_l:
@@ -315,10 +292,11 @@ with tab_manual:
     with col_l:
         duration = st.number_input("Duration (hours) *", min_value=1, max_value=24, value=8)
 
+
 # ── Tab: Bulk Import ──────────────────────────────────────────────────────────
 
 with tab_bulk:
-    # Template download button
+    # Template download
     _bulk_template_cols = [
         "Course Name", "Hours Per Day", "Weeks", "Batch Type",
         "Schedule Details", "Toral Training Duration",
@@ -345,21 +323,45 @@ with tab_bulk:
                 _bulk_df = pd.read_excel(bulk_upload)
             else:
                 _bulk_df = pd.read_csv(bulk_upload)
-
             _parsed_configs, _parsed_warnings = parse_bulk_csv(_bulk_df)
             st.session_state.bulk_configs  = _parsed_configs
             st.session_state.bulk_warnings = _parsed_warnings
-
         except Exception as _exc:
             st.error(f"Could not parse bulk import file: {_exc}")
             st.session_state.bulk_configs  = []
             st.session_state.bulk_warnings = []
 
-    # Show warnings
+    st.markdown("---")
+
+    # Date range (required)
+    st.markdown('<p class="section-header">Schedule Date Range *</p>', unsafe_allow_html=True)
+    _bd_l, _bd_r = st.columns(2)
+    with _bd_l:
+        bulk_from_date = st.date_input("From Date", value=date(2026, 5, 1), key="bulk_from_date")
+    with _bd_r:
+        bulk_to_date = st.date_input("To Date", value=date(2026, 12, 31), key="bulk_to_date")
+
+    # Countries
+    bulk_selected_countries = st.multiselect(
+        "Countries *",
+        country_names,
+        key="bulk_country_select",
+    )
+
+    bulk_usd_us = st.multiselect(
+        "Keep USD pricing & US timezone for",
+        options=bulk_selected_countries,
+        default=[],
+        help="Selected countries will show prices in USD (exchange rate = 1) and times in "
+             "America/New_York instead of their local timezone.",
+        key="bulk_usd_us",
+    )
+
+    # Warnings from CSV parse
     for _w in st.session_state.bulk_warnings:
         st.warning(_w)
 
-    # Course mapping for unrecognised course names
+    # Course mapping for unrecognised names
     if st.session_state.bulk_configs:
         _unique_bulk_courses = list(
             dict.fromkeys(cfg["course_name"] for cfg in st.session_state.bulk_configs)
@@ -384,47 +386,25 @@ with tab_bulk:
                 else:
                     st.session_state.bulk_course_map[_cname] = _sel
 
-        # Date range override
-        bulk_use_override = st.checkbox("Override CSV date range", value=False, key="bulk_override_check")
-        if bulk_use_override:
-            _ov_l, _ov_r = st.columns(2)
-            with _ov_l:
-                bulk_override_from = st.date_input(
-                    "Override From Date", value=date(2026, 5, 1), key="bulk_override_from"
-                )
-            with _ov_r:
-                bulk_override_to = st.date_input(
-                    "Override To Date", value=date(2026, 12, 31), key="bulk_override_to"
-                )
-        else:
-            bulk_override_from = None
-            bulk_override_to   = None
-
-        # Preview table
+        # Preview table (no date columns — dates come from UI above)
         _preview_rows = []
         for _cfg in st.session_state.bulk_configs:
             _preview_rows.append({
-                "Course":       _cfg["course_name"],
-                "Hrs/Day":      _cfg["hours_per_day"],
-                "Sessions":     _cfg["training_days"],
-                "Batch Type":   _cfg["batch_type"],
-                "Weeks":        _cfg["weeks_raw"],
-                "Day Pattern":  _cfg["schedule_raw"],
-                "Start Time":   _cfg["start_time"],
-                "End Time":     _cfg["end_time"],
-                "From":         _cfg["from_date"].strftime("%Y-%m-%d"),
-                "To":           _cfg["to_date"].strftime("%Y-%m-%d"),
+                "Course":      _cfg["course_name"],
+                "Hrs/Day":     _cfg["hours_per_day"],
+                "Sessions":    _cfg["training_days"],
+                "Batch Type":  _cfg["batch_type"],
+                "Weeks":       _cfg["weeks_raw"],
+                "Day Pattern": _cfg["schedule_raw"],
+                "Start Time":  _cfg["start_time"],
+                "End Time":    _cfg["end_time"],
             })
 
         if _preview_rows:
             st.dataframe(pd.DataFrame(_preview_rows), use_container_width=True, hide_index=True)
-            _n_configs  = len(st.session_state.bulk_configs)
-            _n_courses  = len(dict.fromkeys(cfg["course_name"] for cfg in st.session_state.bulk_configs))
+            _n_configs = len(st.session_state.bulk_configs)
+            _n_courses = len(dict.fromkeys(cfg["course_name"] for cfg in st.session_state.bulk_configs))
             st.caption(f"{_n_configs} configurations · {_n_courses} unique courses")
-    else:
-        bulk_use_override  = False
-        bulk_override_from = None
-        bulk_override_to   = None
 
 st.markdown("---")
 
@@ -432,7 +412,6 @@ st.markdown("---")
 
 st.markdown("### Exchange Rates")
 
-# Source badge + fetch controls
 src_col, fetch_col, reset_col = st.columns([3, 1.2, 1.2])
 with src_col:
     src_label  = st.session_state.rates_source
@@ -465,13 +444,11 @@ with reset_col:
         )
         st.rerun()
 
-# Global ±% adjustment
-st.markdown('<p class="section-header">Adjust all selected-country rates by a percentage</p>', unsafe_allow_html=True)
+st.markdown('<p class="section-header">Adjust all rates by a percentage</p>', unsafe_allow_html=True)
 adj_l, adj_r, _ = st.columns([1.5, 1, 5])
 with adj_l:
     adj_pct = st.number_input(
         "Adjustment (%)", value=0.0, step=0.5, format="%.2f",
-        help="Positive = increase rates, negative = decrease. Applied to current rates on click.",
         label_visibility="collapsed",
         key="adj_pct",
     )
@@ -487,7 +464,7 @@ with adj_r:
         _bump_rates(new_rates, f"{st.session_state.rates_source} ({adj_pct:+.2f}%)")
         st.rerun()
 
-# Build rate table for selected countries only
+# Rate table — union of manual + bulk countries
 course_obj = course_map[selected_course_name]
 
 def _bronze_preview(country_obj, rate):
@@ -497,15 +474,19 @@ def _bronze_preview(country_obj, rate):
     bronze_pct = PRICING_TIERS[0]["percentage"]
     return round(base * (1 + bronze_pct / 100) * rate, 2)
 
+_rate_country_names = list(dict.fromkeys(
+    list(selected_country_names) + list(bulk_selected_countries)
+))
+
 rate_rows = []
-for name in selected_country_names:
+for name in _rate_country_names:
     c    = country_map[name]
     rate = st.session_state.base_rates.get(c["currency"], c["exchange_rate"])
     rate_rows.append({
-        "Country":               name,
-        "Currency":              c["currency"],
+        "Country":                name,
+        "Currency":               c["currency"],
         "Exchange Rate (vs USD)": rate,
-        "Bronze Price Preview":  _bronze_preview(c, rate),
+        "Bronze Price Preview":   _bronze_preview(c, rate),
     })
 
 df_rates = pd.DataFrame(rate_rows) if rate_rows else pd.DataFrame(
@@ -524,13 +505,12 @@ edited_rates_df = st.data_editor(
             "Exchange Rate (vs USD)",
             format="%.4f",
             min_value=0.0,
-            help="Rate relative to 1 USD. Edit directly to override.",
         ),
         "Bronze Price Preview": st.column_config.NumberColumn(
             "Bronze Price Preview",
             format="%.2f",
             disabled=True,
-            help="Base price × 1.15 × exchange rate (Bronze tier, for reference only).",
+            help="Base price × 1.15 × exchange rate (Bronze tier, reference only).",
         ),
     },
     hide_index=True,
@@ -538,7 +518,6 @@ edited_rates_df = st.data_editor(
     num_rows="fixed",
 )
 
-# Recompute Bronze preview live from whatever rate the user typed
 if not edited_rates_df.empty:
     def _live_bronze(row):
         c = country_map.get(row["Country"])
@@ -547,7 +526,6 @@ if not edited_rates_df.empty:
         return _bronze_preview(c, row["Exchange Rate (vs USD)"])
     edited_rates_df["Bronze Price Preview"] = edited_rates_df.apply(_live_bronze, axis=1)
 
-    # Persist inline edits back to base_rates so Apply ±% uses the latest values
     for _, row in edited_rates_df.iterrows():
         cur = row["Currency"]
         val = row["Exchange Rate (vs USD)"]
@@ -564,14 +542,10 @@ with col_cancel:
     st.button("Cancel", use_container_width=False)
 
 if generate_clicked:
-    # Determine what is ready
     manual_ready = (wd_batches > 0 or we_batches > 0)
     bulk_ready   = len(st.session_state.bulk_configs) > 0
 
-    # ── Validation ────────────────────────────────────────────────────────────
     errors = []
-    if not selected_country_names:
-        errors.append("Select at least one country.")
 
     selected_tiers = []
     if use_bronze: selected_tiers.append(tier_map["Bronze"])
@@ -584,35 +558,44 @@ if generate_clicked:
         errors.append("Enable at least one of: weekday/weekend batches (Manual tab) or upload a bulk import file (Bulk Import tab).")
 
     if manual_ready:
+        if not selected_country_names:
+            errors.append("Manual Schedule: select at least one country.")
         if from_date >= to_date:
-            errors.append("From Date must be before To Date.")
-        if wd_batches > 0 and not wd_day_format: errors.append("Select at least one weekday day.")
-        if wd_batches > 0 and not wd_weeks:      errors.append("Select at least one weekday week.")
-        if we_batches > 0 and not we_day_format: errors.append("Select at least one weekend day.")
-        if we_batches > 0 and not we_weeks:      errors.append("Select at least one weekend week.")
+            errors.append("Manual Schedule: From Date must be before To Date.")
+        if wd_batches > 0 and not wd_day_format: errors.append("Manual Schedule: select at least one weekday day.")
+        if wd_batches > 0 and not wd_weeks:      errors.append("Manual Schedule: select at least one weekday week.")
+        if we_batches > 0 and not we_day_format: errors.append("Manual Schedule: select at least one weekend day.")
+        if we_batches > 0 and not we_weeks:      errors.append("Manual Schedule: select at least one weekend week.")
+
+    if bulk_ready:
+        if not bulk_selected_countries:
+            errors.append("Bulk Import: select at least one country.")
+        if bulk_from_date >= bulk_to_date:
+            errors.append("Bulk Import: From Date must be before To Date.")
 
     if errors:
         for e in errors:
             st.error(e)
         st.stop()
 
-    # ── Build country list with rates from the edited table ───────────────────
+    # Build rate lookup from edited table
     rate_lookup: dict[str, float | None] = {}
     if not edited_rates_df.empty:
         for _, row in edited_rates_df.iterrows():
             val = row["Exchange Rate (vs USD)"]
             rate_lookup[row["Country"]] = float(val) if pd.notna(val) else None
 
-    countries_with_rates = []
-    for name in selected_country_names:
-        c = dict(country_map[name])
-        c["exchange_rate"] = rate_lookup.get(name, c["exchange_rate"])
-        countries_with_rates.append(c)
+    def _countries_with_rates(names):
+        result = []
+        for name in names:
+            c = dict(country_map[name])
+            c["exchange_rate"] = rate_lookup.get(name, c["exchange_rate"])
+            result.append(c)
+        return result
 
-    # ── Generate rows ─────────────────────────────────────────────────────────
-    all_rows      = []
-    manual_count  = 0
-    bulk_count    = 0
+    all_rows     = []
+    manual_count = 0
+    bulk_count   = 0
 
     if manual_ready:
         params = {
@@ -634,16 +617,15 @@ if generate_clicked:
             "end_time":                time_to_str(end_time_val),
             "duration":                int(duration),
             "status":                  selected_status,
-            "countries":               countries_with_rates,
+            "countries":               _countries_with_rates(selected_country_names),
             "usd_us_countries":        usd_us_countries,
         }
         with st.spinner("Generating manual schedules…"):
             manual_rows = generate_schedules(params)
-        all_rows     += manual_rows
-        manual_count  = len(manual_rows)
+        all_rows    += manual_rows
+        manual_count = len(manual_rows)
 
     if bulk_ready:
-        # Build course_id_map
         course_id_map = {}
         for cfg in st.session_state.bulk_configs:
             name = cfg["course_name"]
@@ -661,16 +643,16 @@ if generate_clicked:
             "default_capacity":   int(default_capacity),
             "training_mode":      mode_value_map[selected_mode_label],
             "status":             selected_status,
-            "countries":          countries_with_rates,
-            "usd_us_countries":   usd_us_countries,
+            "countries":          _countries_with_rates(bulk_selected_countries),
+            "usd_us_countries":   bulk_usd_us,
             "course_id_map":      course_id_map,
-            "override_from_date": bulk_override_from if bulk_use_override else None,
-            "override_to_date":   bulk_override_to   if bulk_use_override else None,
+            "override_from_date": bulk_from_date,
+            "override_to_date":   bulk_to_date,
         }
         with st.spinner("Generating bulk schedules…"):
             bulk_rows = generate_schedules_bulk(st.session_state.bulk_configs, bulk_shared)
-        all_rows   += bulk_rows
-        bulk_count  = len(bulk_rows)
+        all_rows  += bulk_rows
+        bulk_count = len(bulk_rows)
 
     if not all_rows:
         st.warning("No schedules generated. Check your date range and batch settings.")
@@ -679,7 +661,6 @@ if generate_clicked:
     xlsx_bytes = rows_to_excel_bytes(all_rows)
     filename   = f"bulk-schedules-{datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx"
 
-    # Success message
     if manual_ready and bulk_ready:
         st.success(
             f"Generated **{len(all_rows)}** rows — "
