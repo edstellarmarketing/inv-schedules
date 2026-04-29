@@ -126,6 +126,16 @@ with col_r:
         key="country_select",
     )
 
+# ── USD / US-timezone override ────────────────────────────────────────────────
+
+usd_us_countries = st.multiselect(
+    "Keep USD pricing & US timezone for",
+    options=selected_country_names,
+    default=[],
+    help="Selected countries will show prices in USD (exchange rate = 1) and times in "
+         "America/New_York instead of their local timezone.",
+)
+
 # ── Bulk upload countries ─────────────────────────────────────────────────────
 
 with st.expander("📎 Bulk Upload Countries"):
@@ -487,6 +497,7 @@ if generate_clicked:
         "duration":                int(duration),
         "status":                  selected_status,
         "countries":               countries_with_rates,
+        "usd_us_countries":        usd_us_countries,
     }
 
     # ── Generate & download ───────────────────────────────────────────────────

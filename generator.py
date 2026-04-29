@@ -1,7 +1,23 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 import json
 
 from data import DAY_TO_US_DOW, COURSE_PRICING
+
+_INPUT_TZ = "America/New_York"
+
+
+def _convert_time(time_str: str, to_tz: str, ref_date: date) -> str:
+    """
+    Convert HH:MM from America/New_York to `to_tz` using `ref_date` for DST accuracy.
+    Returns the original string unchanged when target is already New York.
+    """
+    if to_tz == _INPUT_TZ:
+        return time_str
+    h, m = map(int, time_str.split(":"))
+    dt = datetime(ref_date.year, ref_date.month, ref_date.day, h, m,
+                  tzinfo=ZoneInfo(_INPUT_TZ))
+    return dt.astimezone(ZoneInfo(to_tz)).strftime("%H:%M")
 
 
 def _nth_day_of_month(year: int, month: int, anchor_us_dow: int, n: int) -> date | None:
@@ -144,10 +160,19 @@ def generate_schedules(params: dict) -> list[dict]:
 
     rows: list[dict] = []
 
+    # Countries that keep USD pricing and New York timezone
+    usd_us_countries: set[str] = set(params.get("usd_us_countries", []))
+
     for country in params["countries"]:
         base_price = COURSE_PRICING.get(
             (params["course_id"], country["region"]), 995
         )
+
+        # Apply USD / US-timezone override if requested
+        use_usd_us = country["name"] in usd_us_countries
+        eff_timezone    = _INPUT_TZ              if use_usd_us else country["timezone"]
+        eff_currency    = "USD"                  if use_usd_us else country["currency"]
+        eff_exch_rate   = 1.0                    if use_usd_us else country["exchange_rate"]
 
         for month_key in all_months:
             for batch_type, batch_group in [
@@ -158,38 +183,46 @@ def generate_schedules(params: dict) -> list[dict]:
                     sessions_json = json.dumps(
                         [s.strftime("%Y-%m-%d") for s in sessions]
                     )
+                    # Convert times using the batch start date for correct DST
+                    local_start_time = _convert_time(
+                        params["start_time"], eff_timezone, start
+                    )
+                    local_end_time = _convert_time(
+                        params["end_time"], eff_timezone, start
+                    )
+
                     for tier in params["pricing_tiers"]:
                         final_price = _calc_final_price(
-                            base_price, tier["percentage"], country["exchange_rate"]
+                            base_price, tier["percentage"], eff_exch_rate
                         )
                         rows.append({
-                            "Course ID":           params["course_id"],
-                            "Course Name":         params["course_name"],
-                            "Country ID":          country["id"],
-                            "Country":             country["name"],
-                            "Region":              country["region"],
-                            "Pricing Tier ID":     tier["id"],
-                            "Pricing Tier":        tier["name"],
-                            "Duration (hr)":       params["duration"],
-                            "Batch Type":          batch_type,
-                            "Start Date":          start.strftime("%Y-%m-%d"),
-                            "End Date":            end.strftime("%Y-%m-%d"),
+                            "Course ID":            params["course_id"],
+                            "Course Name":          params["course_name"],
+                            "Country ID":           country["id"],
+                            "Country":              country["name"],
+                            "Region":               country["region"],
+                            "Pricing Tier ID":      tier["id"],
+                            "Pricing Tier":         tier["name"],
+                            "Duration (hr)":        params["duration"],
+                            "Batch Type":           batch_type,
+                            "Start Date":           start.strftime("%Y-%m-%d"),
+                            "End Date":             end.strftime("%Y-%m-%d"),
                             "Session Dates (JSON)": sessions_json,
-                            "Start Time":          params["start_time"],
-                            "End Time":            params["end_time"],
-                            "Timezone":            country["timezone"],
-                            "Capacity":            params["default_capacity"],
-                            "Base Price USD":      base_price,
-                            "Tier %":              tier["percentage"],
-                            "Exchange Rate":       country["exchange_rate"],
-                            "Final Price":         final_price,
-                            "Currency":            country["currency"],
-                            "Training Mode":       params["training_mode"],
-                            "Status":              params["status"].lower(),
-                            "Generation Result":   "new",
-                            "Error Message":       None,
-                            "Price Override Flag": "false",
-                            "Override Reason":     None,
+                            "Start Time":           local_start_time,
+                            "End Time":             local_end_time,
+                            "Timezone":             eff_timezone,
+                            "Capacity":             params["default_capacity"],
+                            "Base Price USD":        base_price,
+                            "Tier %":               tier["percentage"],
+                            "Exchange Rate":         eff_exch_rate,
+                            "Final Price":           final_price,
+                            "Currency":              eff_currency,
+                            "Training Mode":         params["training_mode"],
+                            "Status":                params["status"].lower(),
+                            "Generation Result":     "new",
+                            "Error Message":         None,
+                            "Price Override Flag":   "false",
+                            "Override Reason":       None,
                         })
 
     return rows
