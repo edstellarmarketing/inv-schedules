@@ -733,7 +733,7 @@ def compute_tz_preview(
 
 
 def rows_to_excel_bytes(rows: list[dict]) -> bytes:
-    """Serialize schedule rows to an xlsx file and return as bytes."""
+    """Serialize schedule rows to xlsx bytes. Includes Time Category column."""
     import io
     import openpyxl
     from openpyxl.styles import Font, PatternFill, Alignment
