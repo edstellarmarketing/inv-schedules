@@ -4,6 +4,7 @@ COURSES = [
     {"id": 3, "name": "PRINCE2 Foundation"},
     {"id": 4, "name": "AWS Cloud Practitioner"},
     {"id": 5, "name": "Agile Scrum Master"},
+    {"id": 6, "name": "PgMP"},
 ]
 
 COUNTRIES = [
@@ -51,6 +52,10 @@ COURSE_PRICING = {
     (5, "Region 2 (Middle East/East Asia)"):  995,
     (5, "Region 3 (South Asia/Africa)"):      795,
     (5, "Region 4 (India)"):                  795,
+    (6, "Region 1 (Americas/Europe)"):       1495,
+    (6, "Region 2 (Middle East/East Asia)"): 1195,
+    (6, "Region 3 (South Asia/Africa)"):      995,
+    (6, "Region 4 (India)"):                  995,
 }
 
 PRICING_TIERS = [

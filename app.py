@@ -1,6 +1,7 @@
 """Bulk Schedule Generator – Streamlit app."""
 
 from datetime import date, datetime, time
+import io as _io
 import pandas as pd
 import requests
 import streamlit as st
@@ -9,7 +10,7 @@ from data import (
     COURSES, COUNTRIES, COURSE_PRICING, PRICING_TIERS,
     TRAINING_MODES, STATUSES, DAYS_OF_WEEK,
 )
-from generator import generate_schedules, rows_to_excel_bytes
+from generator import generate_schedules, generate_schedules_bulk, parse_bulk_csv, rows_to_excel_bytes
 
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -58,6 +59,13 @@ _DEFAULT_COUNTRIES = [
 ]
 if "country_select" not in st.session_state:
     st.session_state["country_select"] = _DEFAULT_COUNTRIES
+
+if "bulk_configs" not in st.session_state:
+    st.session_state.bulk_configs = []
+if "bulk_warnings" not in st.session_state:
+    st.session_state.bulk_warnings = []
+if "bulk_course_map" not in st.session_state:
+    st.session_state.bulk_course_map = {}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -142,8 +150,6 @@ with st.expander("📎 Bulk Upload Countries"):
     up_l, up_r = st.columns([3, 1])
 
     with up_r:
-        # Template download
-        import io as _io
         _tmpl = "Country\n" + "\n".join(country_names)
         st.download_button(
             "⬇ Download Template",
@@ -174,8 +180,8 @@ with st.expander("📎 Bulk Upload Countries"):
             )
             _raw = _df_up[_col].dropna().str.strip().tolist()
 
-            _valid_set   = set(country_names)
-            _recognised  = [n for n in _raw if n in _valid_set]
+            _valid_set    = set(country_names)
+            _recognised   = [n for n in _raw if n in _valid_set]
             _unrecognised = [n for n in _raw if n not in _valid_set]
 
             if _recognised:
@@ -208,15 +214,7 @@ with st.expander("📎 Bulk Upload Countries"):
         except Exception as exc:
             st.error(f"Could not parse file: {exc}")
 
-# ── Dates ─────────────────────────────────────────────────────────────────────
-
-col_l, col_r = st.columns(2)
-with col_l:
-    from_date = st.date_input("From Date *", value=date(2026, 5, 1))
-with col_r:
-    to_date = st.date_input("To Date *", value=date(2026, 8, 31))
-
-# ── Pricing Tiers ─────────────────────────────────────────────────────────────
+# ── Pricing Tiers & Default Capacity ─────────────────────────────────────────
 
 st.markdown('<p class="section-header">Pricing Tiers (based on selected course; leave unchecked for base price only)</p>', unsafe_allow_html=True)
 tier_cols = st.columns(3)
@@ -227,78 +225,206 @@ with tier_cols[1]:
 with tier_cols[2]:
     use_gold   = st.checkbox("Gold",   value=True, key="tier_gold")
 
-# ── Training Days / Capacity ──────────────────────────────────────────────────
+col_l, col_r = st.columns(2)
+with col_l:
+    default_capacity = st.number_input("Default Capacity *", min_value=1, max_value=500, value=20)
+
+# ── Training Mode & Default Status ───────────────────────────────────────────
 
 col_l, col_r = st.columns(2)
 with col_l:
-    training_days    = st.number_input("Training Days (same for weekday & weekend) *", min_value=1, max_value=30, value=3)
-with col_r:
-    default_capacity = st.number_input("Default Capacity *", min_value=1, max_value=500, value=20)
-
-st.markdown("---")
-
-# ── Weekday Schedule ──────────────────────────────────────────────────────────
-
-st.markdown("### Weekday Schedule")
-wd_batches = st.number_input(
-    "No. of Weekday Batches per Month (0 to disable) *",
-    min_value=0, max_value=5, value=2, key="wd_batches",
-)
-
-if wd_batches > 0:
-    wd_day_format = checkbox_row(
-        "Weekday Format (days of week)",
-        [f"wd_day_{d}" for d in DAYS_OF_WEEK],
-        DAYS_OF_WEEK,
-        [d in ("Mon", "Tue", "Wed") for d in DAYS_OF_WEEK],
-    )
-    wd_weeks = week_checkbox_row("Weekday Weeks of Month", "wd", [True, False, True, False, False])
-else:
-    wd_day_format, wd_weeks = [], []
-
-st.markdown("---")
-
-# ── Weekend Schedule ──────────────────────────────────────────────────────────
-
-st.markdown("### Weekend Schedule")
-we_batches = st.number_input(
-    "No. of Weekend Batches per Month (0 to disable) *",
-    min_value=0, max_value=5, value=2, key="we_batches",
-)
-
-if we_batches > 0:
-    we_day_format = checkbox_row(
-        "Weekend Format (days of week)",
-        [f"we_day_{d}" for d in DAYS_OF_WEEK],
-        DAYS_OF_WEEK,
-        [d in ("Fri", "Sat", "Sun") for d in DAYS_OF_WEEK],
-    )
-    we_weeks = week_checkbox_row("Weekend Weeks of Month", "we", [True, False, True, False, False])
-else:
-    we_day_format, we_weeks = [], []
-
-st.markdown("---")
-
-# ── Training Mode & Time Slots ────────────────────────────────────────────────
-
-col_l, _ = st.columns(2)
-with col_l:
     selected_mode_label = st.selectbox("Training Mode *", mode_labels, index=0)
-
-st.markdown('<p class="section-header">Time Slots (enter in New York EST; stored in each country\'s local timezone) *</p>', unsafe_allow_html=True)
-ts_l, ts_r = st.columns(2)
-with ts_l:
-    start_time_val = st.time_input("Start time *", value=time(9, 0),  key="start_time")
-with ts_r:
-    end_time_val   = st.time_input("End time *",   value=time(17, 0), key="end_time")
-
-col_l, _ = st.columns(2)
-with col_l:
-    duration = st.number_input("Duration (hours) *", min_value=1, max_value=24, value=8)
-
-col_l, _ = st.columns(2)
-with col_l:
+with col_r:
     selected_status = st.selectbox("Default Status *", STATUSES, index=0)
+
+st.markdown("---")
+
+# ── Tabs: Manual Schedule | Bulk Import ──────────────────────────────────────
+
+tab_manual, tab_bulk = st.tabs(["📋 Manual Schedule", "📂 Bulk Import"])
+
+# ── Tab: Manual Schedule ──────────────────────────────────────────────────────
+
+with tab_manual:
+    # Dates
+    col_l, col_r = st.columns(2)
+    with col_l:
+        from_date = st.date_input("From Date *", value=date(2026, 5, 1))
+    with col_r:
+        to_date = st.date_input("To Date *", value=date(2026, 8, 31))
+
+    # Training Days
+    col_l, col_r = st.columns(2)
+    with col_l:
+        training_days = st.number_input(
+            "Training Days (same for weekday & weekend) *",
+            min_value=1, max_value=30, value=3,
+        )
+
+    st.markdown("---")
+
+    # Weekday Schedule
+    st.markdown("### Weekday Schedule")
+    wd_batches = st.number_input(
+        "No. of Weekday Batches per Month (0 to disable) *",
+        min_value=0, max_value=5, value=2, key="wd_batches",
+    )
+
+    if wd_batches > 0:
+        wd_day_format = checkbox_row(
+            "Weekday Format (days of week)",
+            [f"wd_day_{d}" for d in DAYS_OF_WEEK],
+            DAYS_OF_WEEK,
+            [d in ("Mon", "Tue", "Wed") for d in DAYS_OF_WEEK],
+        )
+        wd_weeks = week_checkbox_row("Weekday Weeks of Month", "wd", [True, False, True, False, False])
+    else:
+        wd_day_format, wd_weeks = [], []
+
+    st.markdown("---")
+
+    # Weekend Schedule
+    st.markdown("### Weekend Schedule")
+    we_batches = st.number_input(
+        "No. of Weekend Batches per Month (0 to disable) *",
+        min_value=0, max_value=5, value=2, key="we_batches",
+    )
+
+    if we_batches > 0:
+        we_day_format = checkbox_row(
+            "Weekend Format (days of week)",
+            [f"we_day_{d}" for d in DAYS_OF_WEEK],
+            DAYS_OF_WEEK,
+            [d in ("Fri", "Sat", "Sun") for d in DAYS_OF_WEEK],
+        )
+        we_weeks = week_checkbox_row("Weekend Weeks of Month", "we", [True, False, True, False, False])
+    else:
+        we_day_format, we_weeks = [], []
+
+    st.markdown("---")
+
+    # Time Slots
+    st.markdown('<p class="section-header">Time Slots (enter in New York EST; stored in each country\'s local timezone) *</p>', unsafe_allow_html=True)
+    ts_l, ts_r = st.columns(2)
+    with ts_l:
+        start_time_val = st.time_input("Start time *", value=time(9, 0),  key="start_time")
+    with ts_r:
+        end_time_val   = st.time_input("End time *",   value=time(17, 0), key="end_time")
+
+    col_l, _ = st.columns(2)
+    with col_l:
+        duration = st.number_input("Duration (hours) *", min_value=1, max_value=24, value=8)
+
+# ── Tab: Bulk Import ──────────────────────────────────────────────────────────
+
+with tab_bulk:
+    # Template download button
+    _bulk_template_cols = [
+        "Course Name", "Hours Per Day", "Weeks", "Batch Type",
+        "Schedule Details", "Toral Training Duration",
+        "Start Time", "End Time", "Time Zone", "Start Date", "End Date",
+    ]
+    _template_csv = ",".join(_bulk_template_cols) + "\n"
+    st.download_button(
+        "⬇ Download Bulk Import Template (CSV)",
+        data=_template_csv.encode(),
+        file_name="bulkimport_template.csv",
+        mime="text/csv",
+    )
+
+    # File uploader
+    bulk_upload = st.file_uploader(
+        "Upload Bulk Schedule CSV or Excel",
+        type=["csv", "xlsx", "xls"],
+        key="bulk_csv_upload",
+    )
+
+    if bulk_upload is not None:
+        try:
+            if bulk_upload.name.endswith((".xlsx", ".xls")):
+                _bulk_df = pd.read_excel(bulk_upload)
+            else:
+                _bulk_df = pd.read_csv(bulk_upload)
+
+            _parsed_configs, _parsed_warnings = parse_bulk_csv(_bulk_df)
+            st.session_state.bulk_configs  = _parsed_configs
+            st.session_state.bulk_warnings = _parsed_warnings
+
+        except Exception as _exc:
+            st.error(f"Could not parse bulk import file: {_exc}")
+            st.session_state.bulk_configs  = []
+            st.session_state.bulk_warnings = []
+
+    # Show warnings
+    for _w in st.session_state.bulk_warnings:
+        st.warning(_w)
+
+    # Course mapping for unrecognised course names
+    if st.session_state.bulk_configs:
+        _unique_bulk_courses = list(
+            dict.fromkeys(cfg["course_name"] for cfg in st.session_state.bulk_configs)
+        )
+        _unmapped = [n for n in _unique_bulk_courses if n not in course_map]
+
+        if _unmapped:
+            st.markdown("**Course Mapping** — map unrecognised course names to known courses:")
+            _skip_label = "(skip)"
+            _map_options = [_skip_label] + course_names
+            for _cname in _unmapped:
+                _current = st.session_state.bulk_course_map.get(_cname, _skip_label)
+                _idx = _map_options.index(_current) if _current in _map_options else 0
+                _sel = st.selectbox(
+                    f'Map "{_cname}" to:',
+                    _map_options,
+                    index=_idx,
+                    key=f"bulk_map_{_cname}",
+                )
+                if _sel == _skip_label:
+                    st.session_state.bulk_course_map.pop(_cname, None)
+                else:
+                    st.session_state.bulk_course_map[_cname] = _sel
+
+        # Date range override
+        bulk_use_override = st.checkbox("Override CSV date range", value=False, key="bulk_override_check")
+        if bulk_use_override:
+            _ov_l, _ov_r = st.columns(2)
+            with _ov_l:
+                bulk_override_from = st.date_input(
+                    "Override From Date", value=date(2026, 5, 1), key="bulk_override_from"
+                )
+            with _ov_r:
+                bulk_override_to = st.date_input(
+                    "Override To Date", value=date(2026, 12, 31), key="bulk_override_to"
+                )
+        else:
+            bulk_override_from = None
+            bulk_override_to   = None
+
+        # Preview table
+        _preview_rows = []
+        for _cfg in st.session_state.bulk_configs:
+            _preview_rows.append({
+                "Course":       _cfg["course_name"],
+                "Hrs/Day":      _cfg["hours_per_day"],
+                "Sessions":     _cfg["training_days"],
+                "Batch Type":   _cfg["batch_type"],
+                "Weeks":        _cfg["weeks_raw"],
+                "Day Pattern":  _cfg["schedule_raw"],
+                "Start Time":   _cfg["start_time"],
+                "End Time":     _cfg["end_time"],
+                "From":         _cfg["from_date"].strftime("%Y-%m-%d"),
+                "To":           _cfg["to_date"].strftime("%Y-%m-%d"),
+            })
+
+        if _preview_rows:
+            st.dataframe(pd.DataFrame(_preview_rows), use_container_width=True, hide_index=True)
+            _n_configs  = len(st.session_state.bulk_configs)
+            _n_courses  = len(dict.fromkeys(cfg["course_name"] for cfg in st.session_state.bulk_configs))
+            st.caption(f"{_n_configs} configurations · {_n_courses} unique courses")
+    else:
+        bulk_use_override  = False
+        bulk_override_from = None
+        bulk_override_to   = None
 
 st.markdown("---")
 
@@ -309,7 +435,7 @@ st.markdown("### Exchange Rates")
 # Source badge + fetch controls
 src_col, fetch_col, reset_col = st.columns([3, 1.2, 1.2])
 with src_col:
-    src_label = st.session_state.rates_source
+    src_label  = st.session_state.rates_source
     fetched_at = st.session_state.rates_fetched_at
     badge = f"**Source:** {src_label}"
     if fetched_at:
@@ -373,7 +499,7 @@ def _bronze_preview(country_obj, rate):
 
 rate_rows = []
 for name in selected_country_names:
-    c = country_map[name]
+    c    = country_map[name]
     rate = st.session_state.base_rates.get(c["currency"], c["exchange_rate"])
     rate_rows.append({
         "Country":               name,
@@ -429,7 +555,7 @@ if not edited_rates_df.empty:
 
 st.markdown("---")
 
-# ── Generate ──────────────────────────────────────────────────────────────────
+# ── Generate & Download ───────────────────────────────────────────────────────
 
 col_btn, col_cancel = st.columns([1, 6])
 with col_btn:
@@ -438,12 +564,14 @@ with col_cancel:
     st.button("Cancel", use_container_width=False)
 
 if generate_clicked:
+    # Determine what is ready
+    manual_ready = (wd_batches > 0 or we_batches > 0)
+    bulk_ready   = len(st.session_state.bulk_configs) > 0
+
     # ── Validation ────────────────────────────────────────────────────────────
     errors = []
     if not selected_country_names:
         errors.append("Select at least one country.")
-    if from_date >= to_date:
-        errors.append("From Date must be before To Date.")
 
     selected_tiers = []
     if use_bronze: selected_tiers.append(tier_map["Bronze"])
@@ -452,15 +580,20 @@ if generate_clicked:
     if not selected_tiers:
         errors.append("Select at least one pricing tier.")
 
-    if wd_batches > 0 and not wd_day_format: errors.append("Select at least one weekday day.")
-    if wd_batches > 0 and not wd_weeks:      errors.append("Select at least one weekday week.")
-    if we_batches > 0 and not we_day_format: errors.append("Select at least one weekend day.")
-    if we_batches > 0 and not we_weeks:      errors.append("Select at least one weekend week.")
-    if wd_batches == 0 and we_batches == 0:
-        errors.append("Enable at least one of weekday or weekend batches.")
+    if not manual_ready and not bulk_ready:
+        errors.append("Enable at least one of: weekday/weekend batches (Manual tab) or upload a bulk import file (Bulk Import tab).")
+
+    if manual_ready:
+        if from_date >= to_date:
+            errors.append("From Date must be before To Date.")
+        if wd_batches > 0 and not wd_day_format: errors.append("Select at least one weekday day.")
+        if wd_batches > 0 and not wd_weeks:      errors.append("Select at least one weekday week.")
+        if we_batches > 0 and not we_day_format: errors.append("Select at least one weekend day.")
+        if we_batches > 0 and not we_weeks:      errors.append("Select at least one weekend week.")
 
     if errors:
-        for e in errors: st.error(e)
+        for e in errors:
+            st.error(e)
         st.stop()
 
     # ── Build country list with rates from the edited table ───────────────────
@@ -476,45 +609,86 @@ if generate_clicked:
         c["exchange_rate"] = rate_lookup.get(name, c["exchange_rate"])
         countries_with_rates.append(c)
 
-    # ── Build params ──────────────────────────────────────────────────────────
-    params = {
-        "course_id":               course_obj["id"],
-        "course_name":             course_obj["name"],
-        "from_date":               from_date,
-        "to_date":                 to_date,
-        "pricing_tiers":           selected_tiers,
-        "training_days":           int(training_days),
-        "default_capacity":        int(default_capacity),
-        "weekday_batches_enabled": wd_batches > 0,
-        "weekday_day_format":      wd_day_format,
-        "weekday_weeks":           wd_weeks,
-        "weekend_batches_enabled": we_batches > 0,
-        "weekend_day_format":      we_day_format,
-        "weekend_weeks":           we_weeks,
-        "training_mode":           mode_value_map[selected_mode_label],
-        "start_time":              time_to_str(start_time_val),
-        "end_time":                time_to_str(end_time_val),
-        "duration":                int(duration),
-        "status":                  selected_status,
-        "countries":               countries_with_rates,
-        "usd_us_countries":        usd_us_countries,
-    }
+    # ── Generate rows ─────────────────────────────────────────────────────────
+    all_rows      = []
+    manual_count  = 0
+    bulk_count    = 0
 
-    # ── Generate & download ───────────────────────────────────────────────────
-    with st.spinner("Generating schedules…"):
-        rows = generate_schedules(params)
+    if manual_ready:
+        params = {
+            "course_id":               course_obj["id"],
+            "course_name":             course_obj["name"],
+            "from_date":               from_date,
+            "to_date":                 to_date,
+            "pricing_tiers":           selected_tiers,
+            "training_days":           int(training_days),
+            "default_capacity":        int(default_capacity),
+            "weekday_batches_enabled": wd_batches > 0,
+            "weekday_day_format":      wd_day_format,
+            "weekday_weeks":           wd_weeks,
+            "weekend_batches_enabled": we_batches > 0,
+            "weekend_day_format":      we_day_format,
+            "weekend_weeks":           we_weeks,
+            "training_mode":           mode_value_map[selected_mode_label],
+            "start_time":              time_to_str(start_time_val),
+            "end_time":                time_to_str(end_time_val),
+            "duration":                int(duration),
+            "status":                  selected_status,
+            "countries":               countries_with_rates,
+            "usd_us_countries":        usd_us_countries,
+        }
+        with st.spinner("Generating manual schedules…"):
+            manual_rows = generate_schedules(params)
+        all_rows     += manual_rows
+        manual_count  = len(manual_rows)
 
-    if not rows:
+    if bulk_ready:
+        # Build course_id_map
+        course_id_map = {}
+        for cfg in st.session_state.bulk_configs:
+            name = cfg["course_name"]
+            if name in course_map:
+                course_id_map[name] = course_map[name]["id"]
+            else:
+                mapped = st.session_state.bulk_course_map.get(name)
+                if mapped and mapped in course_map:
+                    course_id_map[name] = course_map[mapped]["id"]
+                else:
+                    course_id_map[name] = 0
+
+        bulk_shared = {
+            "pricing_tiers":      selected_tiers,
+            "default_capacity":   int(default_capacity),
+            "training_mode":      mode_value_map[selected_mode_label],
+            "status":             selected_status,
+            "countries":          countries_with_rates,
+            "usd_us_countries":   usd_us_countries,
+            "course_id_map":      course_id_map,
+            "override_from_date": bulk_override_from if bulk_use_override else None,
+            "override_to_date":   bulk_override_to   if bulk_use_override else None,
+        }
+        with st.spinner("Generating bulk schedules…"):
+            bulk_rows = generate_schedules_bulk(st.session_state.bulk_configs, bulk_shared)
+        all_rows   += bulk_rows
+        bulk_count  = len(bulk_rows)
+
+    if not all_rows:
         st.warning("No schedules generated. Check your date range and batch settings.")
         st.stop()
 
-    xlsx_bytes = rows_to_excel_bytes(rows)
-    filename = f"bulk-schedules-{datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx"
+    xlsx_bytes = rows_to_excel_bytes(all_rows)
+    filename   = f"bulk-schedules-{datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx"
 
-    st.success(
-        f"Generated **{len(rows)}** schedule rows across "
-        f"**{len(selected_country_names)}** countries."
-    )
+    # Success message
+    if manual_ready and bulk_ready:
+        st.success(
+            f"Generated **{len(all_rows)}** rows — "
+            f"**{manual_count}** from manual schedule, **{bulk_count}** from bulk import."
+        )
+    elif manual_ready:
+        st.success(f"Generated **{len(all_rows)}** rows from manual schedule.")
+    else:
+        st.success(f"Generated **{len(all_rows)}** rows from bulk import.")
 
     st.download_button(
         label="⬇ Download Excel",
@@ -525,4 +699,4 @@ if generate_clicked:
     )
 
     with st.expander("Preview (first 50 rows)", expanded=False):
-        st.dataframe(pd.DataFrame(rows[:50]), use_container_width=True)
+        st.dataframe(pd.DataFrame(all_rows[:50]), use_container_width=True)
