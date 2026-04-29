@@ -58,16 +58,26 @@ def to_12h(time_24: str) -> str:
 
 
 def _time_category(time_24: str) -> str:
-    """Return the display time-slot category for a local 24-hour start time."""
+    """
+    Return the display time-slot category for a local 24-hour start time.
+    Covers all 24 hours so every record gets a value.
+
+    00:00 – 05:59  Early Morning
+    06:00 – 08:59  Early Morning
+    09:00 – 11:59  Morning
+    12:00 – 14:59  Noon
+    15:00 – 16:29  Early Evening
+    16:30 – 17:59  Evening
+    18:00 – 23:59  Late Evening
+    """
     h, m = map(int, time_24.split(":"))
     mins = h * 60 + m
-    if 6*60 <= mins < 9*60:        return "Early Morning"
-    if 9*60 <= mins < 11*60:       return "Morning"
-    if 12*60 <= mins < 14*60:      return "Noon"
-    if 15*60 <= mins < 16*60 + 30: return "Early Evening"
-    if 16*60 + 30 <= mins < 18*60: return "Evening"
-    if 18*60 <= mins < 21*60:      return "Late Evening"
-    return ""
+    if mins < 9*60:                return "Early Morning"   # midnight–9 AM
+    if mins < 12*60:               return "Morning"         # 9 AM–noon
+    if mins < 15*60:               return "Noon"            # noon–3 PM
+    if mins < 16*60 + 30:          return "Early Evening"   # 3 PM–4:30 PM
+    if mins < 18*60:               return "Evening"         # 4:30 PM–6 PM
+    return "Late Evening"                                   # 6 PM–midnight
 
 
 # Per-timezone minute offset applied on top of the standard DST-aware conversion.
@@ -741,11 +751,11 @@ def rows_to_excel_bytes(rows: list[dict]) -> bytes:
     COLUMNS = [
         "Course ID", "Course Name", "Country ID", "Country", "Region",
         "Pricing Tier ID", "Pricing Tier", "Duration (hr)", "Batch Type",
-        "Start Date", "End Date", "Time Category", "Session Dates (JSON)", "Start Time",
+        "Start Date", "End Date", "Session Dates (JSON)", "Start Time",
         "End Time", "Timezone", "Capacity", "Base Price USD", "Tier %",
         "Exchange Rate", "Final Price", "Currency", "Training Mode",
         "Status", "Generation Result", "Error Message",
-        "Price Override Flag", "Override Reason",
+        "Price Override Flag", "Override Reason", "Time Category",
     ]
 
     wb = openpyxl.Workbook()
